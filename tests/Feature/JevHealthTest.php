@@ -95,7 +95,7 @@ test('admin can toggle ai advisory via toggle-advisory endpoint', function (): v
 
     $settings = app(AiSettings::class);
     expect($settings->advisory_enabled)->toBeTrue()
-        ->and($settings->disclosure_accepted)->toBeTrue();
+        ->and($settings->disclosure_accepted)->toBeFalse();
 });
 
 test('finance jev analytics page renders with health telemetry prop', function (): void {

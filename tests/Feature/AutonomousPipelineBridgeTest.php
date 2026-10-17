@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
+use App\Actions\ImportTuitionPaymentAsCollection;
 use App\Ai\Agents\InstitutionPolicyAnalyst;
 use App\Jobs\AssessInstitutionPolicy;
 use App\Models\InstitutionPolicyAssessment;
 use App\Models\PaymentIntent;
 use App\Models\PaymentSubmissionOutbox;
 use App\Models\StudentTuitionPayment;
-use App\Models\Transaction;
 use App\Models\Vendor;
 use App\Services\Ai\AiProviderResolver;
 use App\Services\AutonomousPipelineBridge;
@@ -17,7 +17,6 @@ use App\Services\InstitutionPolicyInterpreter;
 use App\Services\InstitutionPolicyWorkspace;
 use App\Services\Payments\TransportAcceptance;
 use App\Services\Payments\TransportResolution;
-use App\Services\PaymentSettlementReconciler;
 use App\Services\StudentTuitionPaymentProcessor;
 use App\Services\StudentTuitionPaymentService;
 use App\Settings\AiSettings;
@@ -84,9 +83,10 @@ function setupTestPublishedPolicy(array $c): void
     $workspace->publish($c['reviewer'], $policy, $policy->content_digest, null, 'Authored policy and exact finance controls independently checked.');
 }
 
-test('autonomous pipeline bridge reconciles tuition and automatically disburses to approved vendor on arc testnet', function (): void {
+test('autonomous pipeline bridge never manufactures approvals or disburses even when auto flags are enabled', function (): void {
     travelTo(now()->utc()->startOfSecond());
     $c = paymentAuthorizationContext(withFunding: false);
+    config(['eduflow.institution_policy.classification_engine' => 'text']);
     setupTestPublishedPolicy($c);
     PaymentIntent::query()->where('organization_id', $c['institution']->id)->delete();
 
@@ -150,32 +150,18 @@ test('autonomous pipeline bridge reconciles tuition and automatically disburses 
     $bill = $c['drafts'][0]->invoice;
 
     // First draft bill is 25.000001 USDC, which is <= 50 USDC
+    app(ImportTuitionPaymentAsCollection::class)->handle($c['maker'], $tuitionPayment, (string) Str::uuid());
     $telemetry = $bridge->bridgePayment($tuitionPayment, $bill->id);
 
-    expect($telemetry['success'])->toBeTrue()
-        ->and($telemetry['stage'])->toBe('disbursement_submitted')
-        ->and($telemetry['payment_id'])->toBe($tuitionPayment->id)
-        ->and($telemetry['invoice_id'])->toBe($bill->id)
-        ->and($telemetry['outbox_state'])->toBe('submitted')
-        ->and($telemetry['provider_handle'])->toBe('226c7ce7-8f2f-53ac-8b06-f18aac151ce4');
-
-    // Now reconcile settlement to complete on-chain verification
-    $outbox = PaymentSubmissionOutbox::query()->findOrFail($telemetry['submission_outbox_id']);
-    stubArc(settledReceiptFor($outbox));
-
-    $verdict = app(PaymentSettlementReconciler::class)->reconcile($outbox);
-    expect($verdict['settled'])->toBeTrue();
-
-    app(PaymentSettlementReconciler::class)->mirrorSettlement($outbox, $verdict);
-    $bill->update(['status' => 'paid']);
-
-    expect($bill->fresh()->status)->toBe('paid')
-        ->and(Transaction::query()->where('recipient_address', $telemetry['vendor_payout_address'])->exists())->toBeTrue();
+    expect($telemetry['stage'])->toBe('awaiting_receipt_review')
+        ->and(PaymentSubmissionOutbox::query()->count())->toBe(0)
+        ->and($bill->fresh()->status)->not->toBe('paid');
 });
 
-test('autonomous pipeline pauses when bill exceeds max_auto_disburse_usdc threshold', function (): void {
+test('autonomous pipeline requires independent review regardless of auto-disburse threshold', function (): void {
     travelTo(now()->utc()->startOfSecond());
     $c = paymentAuthorizationContext(withFunding: false);
+    config(['eduflow.institution_policy.classification_engine' => 'text']);
     setupTestPublishedPolicy($c);
 
     config([
@@ -224,10 +210,9 @@ test('autonomous pipeline pauses when bill exceeds max_auto_disburse_usdc thresh
     $bridge = app(AutonomousPipelineBridge::class);
     $bill = $c['drafts'][0]->invoice; // 25.000001 USDC bill
 
+    app(ImportTuitionPaymentAsCollection::class)->handle($c['maker'], $receipt, (string) Str::uuid());
     $telemetry = $bridge->bridgePayment($receipt, $bill->id);
 
-    expect($telemetry['success'])->toBeTrue()
-        ->and($telemetry['stage'])->toBe('awaiting_manual_authorization')
-        ->and($telemetry['invoice_id'])->toBe($bill->id)
+    expect($telemetry['stage'])->toBe('awaiting_receipt_review')
         ->and(PaymentSubmissionOutbox::query()->count())->toBe(0);
 });

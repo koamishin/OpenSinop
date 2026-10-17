@@ -6,16 +6,13 @@ namespace App\Http\Controllers;
 
 use App\Actions\ReviewCollectionBatch;
 use App\Http\Requests\StoreInstitutionPolicyEvaluationRequest;
-use App\Jobs\EvaluateInstitutionPolicy;
 use App\Models\BudgetSnapshot;
 use App\Models\CollectionBatch;
 use App\Models\CollectionBatchReview;
 use App\Models\InstitutionPolicyEvaluation;
 use App\Models\InstitutionPolicyPublication;
-use App\Models\StudentTuitionPayment;
 use App\Models\Transaction;
 use App\Models\User;
-use App\Services\AutonomousPipelineBridge;
 use App\Services\InstallationInstitution;
 use App\Services\InstitutionPolicyEvaluations;
 use App\Services\InstitutionPolicyWorkspace;
@@ -28,7 +25,6 @@ use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
-use Throwable;
 
 class InstitutionPolicyEvaluationController extends Controller
 {
@@ -123,22 +119,15 @@ class InstitutionPolicyEvaluationController extends Controller
 
         $existingReview = CollectionBatchReview::query()->where('collection_batch_id', $batch->id)->first();
         if ($existingReview === null) {
-            if ($batch->tuitionPayment instanceof StudentTuitionPayment && config('eduflow.autonomous_pipeline.enabled', true)) {
-                app(AutonomousPipelineBridge::class)->bridgePayment($batch->tuitionPayment);
-            } else {
-                $reviewer = ($actor->id !== $batch->prepared_by && $actor->hasAnyRole(['admin', 'super_admin']))
-                    ? $actor
-                    : app(AutonomousPipelineBridge::class)->resolveReviewer($actor, $batch);
-
-                $reviewCollection->handle(
-                    $reviewer,
-                    $batch,
-                    $batch->snapshot_digest,
-                    'approve_receipts',
-                    'Direct staff approval from Policy Evaluations',
-                    'Verified receipt against institutional ledger and treasury records.'
-                );
-            }
+            Gate::forUser($actor)->authorize('review', $batch);
+            $reviewCollection->handle(
+                $actor,
+                $batch,
+                $batch->snapshot_digest,
+                'approve_receipts',
+                'Direct staff approval from Policy Evaluations',
+                'Verified receipt against institutional ledger and treasury records.'
+            );
         }
 
         // Re-evaluate against active policy publication so updated results are immediate
@@ -170,18 +159,12 @@ class InstitutionPolicyEvaluationController extends Controller
                     'reason' => 'Fresh evaluation after receipt approval and verification.',
                 ]);
 
-                try {
-                    app()->call([new EvaluateInstitutionPolicy($newEvaluation->id), 'handle']);
-                    $newEvaluation->refresh();
-                } catch (Throwable $e) {
-                    report($e);
-                }
             }
         }
 
         return response()->json([
             'success' => true,
-            'message' => 'Receipt approved and verified. Policy evaluation completed.',
+            'message' => 'Receipt approved. Policy evaluation queued; no spending authorized.',
             'collection_id' => $batch->id,
             'evaluation' => $newEvaluation instanceof InstitutionPolicyEvaluation ? $this->data($newEvaluation) : null,
         ]);

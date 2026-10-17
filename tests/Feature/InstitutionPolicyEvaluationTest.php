@@ -242,7 +242,7 @@ test('default institution seeder includes Northstar budget categories and tuitio
         ->and(FinancePolicyActivation::query()->count())->toBe(0);
 });
 
-test('staff can approve receipt directly from policy evaluations and obtain immediate evaluation', function (): void {
+test('staff receipt approval queues classification without running provider in request', function (): void {
     $context = policyEvaluationContext();
     $cashier = $context['maker'];
     $reviewer = $context['reviewer'];
@@ -283,8 +283,10 @@ test('staff can approve receipt directly from policy evaluations and obtain imme
         ->latest('id')
         ->first();
 
-    expect($latestEval)->not->toBeNull()
-        ->and($latestEval->hasValidResult())->toBeTrue();
+    expect($latestEval)->not->toBeNull()->and($latestEval->state)->toBe('queued');
+    Bus::assertDispatched(EvaluateInstitutionPolicy::class);
+    processPolicyEvaluation($latestEval->id);
+    expect($latestEval->fresh()->hasValidResult())->toBeTrue();
 });
 
 test('unauthorized user cannot approve collection receipt from policy evaluations', function (): void {
@@ -314,7 +316,7 @@ test('unauthorized user cannot approve collection receipt from policy evaluation
     expect(CollectionBatchReview::query()->where('collection_batch_id', $batch->id)->exists())->toBeFalse();
 });
 
-test('when maker calls approve receipt, dual control resolves an independent reviewer without self review violation', function (): void {
+test('maker cannot approve own receipt or borrow another reviewer identity', function (): void {
     $context = policyEvaluationContext();
     $cashier = $context['maker'];
     $cashier->assignRole('admin');
@@ -334,13 +336,8 @@ test('when maker calls approve receipt, dual control resolves an independent rev
         'received_not_forecast' => true,
     ]);
 
-    // Maker (cashier) attempts to approve directly from Policy Evaluations
     $this->actingAs($cashier)->postJson(route('finance.policy-evaluations.approve-receipt'), [
         'collection_id' => $batch->id,
-    ])->assertSuccessful();
-
-    $review = CollectionBatchReview::query()->where('collection_batch_id', $batch->id)->firstOrFail();
-    expect($review->decision)->toBe('approve_receipts')
-        // Strict dual-control: reviewer MUST NOT be the maker
-        ->and($review->reviewed_by)->not->toBe($cashier->id);
+    ])->assertForbidden();
+    expect(CollectionBatchReview::query()->where('collection_batch_id', $batch->id)->exists())->toBeFalse();
 });

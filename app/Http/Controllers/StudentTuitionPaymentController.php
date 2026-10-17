@@ -18,6 +18,7 @@ use App\Models\TuitionAccount;
 use App\Models\User;
 use App\Notifications\TuitionPaymentSubmittedNotification;
 use App\Services\CurrencyConverter;
+use App\Services\StudentPaymentProgress;
 use App\Services\StudentTuitionPaymentService;
 use App\Services\StudentWalletService;
 use chillerlan\QRCode\QRCode;
@@ -50,7 +51,7 @@ class StudentTuitionPaymentController extends Controller
     /**
      * Render the dedicated crypto wallet transfer screen for student tuition and campus bills.
      */
-    public function create(Request $request, CurrencyConverter $converter): Response
+    public function create(Request $request, CurrencyConverter $converter, StudentPaymentProgress $progress): Response
     {
         abort_unless($request->user()?->hasRole('student'), 403);
         $student = $request->user()->student()->firstOrFail();
@@ -286,6 +287,7 @@ class StudentTuitionPaymentController extends Controller
                     'can_cancel' => $p->posted_at === null && $p->approval_started_at === null && $p->tx_hash === null && $p->circle_challenge_id === null,
                     'amount_base_units' => (string) $p->snapshot['amount_base_units'],
                     'applied_base_units' => (string) $p->applied_base_units,
+                    'progress' => $progress->forPayment($p),
                 ])
                 ->all(),
             'bills' => $bills,

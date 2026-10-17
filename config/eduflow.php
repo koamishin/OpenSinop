@@ -6,7 +6,7 @@ return [
 
     'institution_policy' => [
         'advice_enabled' => env('EDUFLOW_INSTITUTION_POLICY_ADVICE', false),
-        'classification_engine' => env('EDUFLOW_POLICY_CLASSIFICATION_ENGINE', 'jev'),
+        'classification_engine' => env('EDUFLOW_POLICY_CLASSIFICATION_ENGINE', 'text'),
     ],
 
     'background_finance' => [
@@ -172,11 +172,11 @@ return [
     |
     */
     'autonomous_pipeline' => [
-        'enabled' => env('EDUFLOW_AUTONOMOUS_PIPELINE_ENABLED', true),
-        'auto_disburse' => env('EDUFLOW_AUTONOMOUS_PIPELINE_AUTO_DISBURSE', true),
+        'enabled' => env('EDUFLOW_AUTONOMOUS_PIPELINE_ENABLED', false),
+        'auto_disburse' => env('EDUFLOW_AUTONOMOUS_PIPELINE_AUTO_DISBURSE', false),
         'max_auto_disburse_usdc' => (float) env('EDUFLOW_AUTONOMOUS_PIPELINE_MAX_USDC', 50.00),
-        'maker_id' => env('EDUFLOW_AUTONOMOUS_PIPELINE_MAKER_ID', 4),
-        'reviewer_id' => env('EDUFLOW_AUTONOMOUS_PIPELINE_REVIEWER_ID', 1),
+        'maker_id' => env('EDUFLOW_AUTONOMOUS_PIPELINE_MAKER_ID'),
+        'reviewer_id' => env('EDUFLOW_AUTONOMOUS_PIPELINE_REVIEWER_ID'),
     ],
 
     /*

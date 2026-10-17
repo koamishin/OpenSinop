@@ -36,15 +36,15 @@ final readonly class InstitutionPolicyInterpreter
      */
     public function interpret(InstitutionPolicyVersion $policy, string $kind, array $evidence, int $remainingSeconds = 60): array
     {
+        if (! $this->settings->mayCallProvider()) {
+            throw ValidationException::withMessages(['ai' => 'AI advisory is disabled or provider disclosure has not been accepted. No policy data was sent.']);
+        }
         if ($kind === 'classification' && config('eduflow.institution_policy.classification_engine') === 'jev') {
             $result = $this->sanitize($policy, $this->jev->classify($policy, $evidence, $remainingSeconds), $kind);
 
             return [...$result, 'jev_called' => true];
         }
 
-        if (! $this->settings->mayCallProvider()) {
-            throw ValidationException::withMessages(['ai' => 'AI advisory is disabled or provider disclosure has not been accepted. No policy data was sent.']);
-        }
         $provider = $this->providers->resolve();
         if ($provider === null) {
             throw ValidationException::withMessages(['ai' => 'Configure an approved text provider before interpreting policy.']);

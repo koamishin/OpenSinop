@@ -47,6 +47,7 @@ class BackfillStudentControlledPayments extends Command
         $this->info(sprintf('Found %d settled student-controlled payment(s) to inspect.', $payments->count()));
         $synced = 0;
         $alreadyComplete = 0;
+        $incomplete = 0;
 
         foreach ($payments as $payment) {
             $hash = strtolower((string) $payment->tx_hash);
@@ -98,10 +99,21 @@ class BackfillStudentControlledPayments extends Command
                 continue;
             }
 
-            $checkout->recordSettlement($payment);
-
-            $this->info(sprintf('  [SYNCED] Payment %s (%s USDC) bridged: %s', $payment->id, $amountUsdc, implode(', ', $missing)));
-            $synced++;
+            try {
+                $checkout->recordSettlement($payment);
+                $record = $isTuition ? $payment->tuitionPayment()->first() : $payment->billPayment()->first();
+                $batchExists = $record !== null && CollectionBatch::query()
+                    ->where($isTuition ? 'student_tuition_payment_id' : 'student_bill_payment_id', $record->id)->exists();
+                if ($record === null || ! $batchExists || ! $payment->transaction()->exists()) {
+                    throw new \RuntimeException('Required reconciliation records remain missing. Check institution treasury and configured intake owner.');
+                }
+                $this->info(sprintf('  [SYNCED] Payment %s (%s USDC) bridged: %s', $payment->id, $amountUsdc, implode(', ', $missing)));
+                $synced++;
+            } catch (\Throwable $exception) {
+                report($exception);
+                $this->error('  [INCOMPLETE] Payment '.$payment->id.': reconciliation blocked. No transfer resent. Inspect application logs and repair configuration.');
+                $incomplete++;
+            }
         }
 
         $this->newLine();
@@ -113,6 +125,6 @@ class BackfillStudentControlledPayments extends Command
             $dryRun ? ' (DRY RUN - no database changes applied)' : ''
         ));
 
-        return self::SUCCESS;
+        return $incomplete > 0 ? self::FAILURE : self::SUCCESS;
     }
 }

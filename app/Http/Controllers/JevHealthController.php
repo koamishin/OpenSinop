@@ -39,7 +39,7 @@ final class JevHealthController extends Controller
     }
 
     /**
-     * Quick toggle to enable AI advisory and accept disclosure.
+     * Toggle advisory without accepting provider disclosure on behalf of an operator.
      */
     public function toggleAdvisory(
         Request $request,
@@ -56,9 +56,6 @@ final class JevHealthController extends Controller
         $enable = $request->boolean('enable', true);
 
         $settings->advisory_enabled = $enable;
-        if ($enable) {
-            $settings->disclosure_accepted = true;
-        }
         $settings->save();
 
         $institution = $institutions->require();

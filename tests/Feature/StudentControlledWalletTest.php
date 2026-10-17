@@ -12,7 +12,13 @@ use App\Filament\Resources\TuitionAccounts\Pages\ViewTuitionAccount;
 use App\Filament\Resources\TuitionAccounts\RelationManagers\PaymentsRelationManager;
 use App\Filament\Widgets\AdoptionActivityChart;
 use App\Filament\Widgets\TreasuryOverviewWidget;
+use App\Jobs\EvaluateInstitutionPolicy;
+use App\Jobs\ReconcileStudentControlledPayment;
 use App\Models\CollectionBatch;
+use App\Models\CollectionBatchReview;
+use App\Models\InstitutionPolicyEvaluation;
+use App\Models\Organization;
+use App\Models\PaymentAuthorization;
 use App\Models\Student;
 use App\Models\StudentBill;
 use App\Models\StudentBillPayment;
@@ -22,12 +28,17 @@ use App\Models\StudentWallet;
 use App\Models\Transaction;
 use App\Models\TuitionAccount;
 use App\Models\User;
+use App\Models\Wallet;
 use App\Notifications\StudentControlledPaymentSettled;
 use App\Services\ArcSettlementVerifier;
 use App\Services\CircleStudentWallets;
+use App\Services\InstallationInstitution;
 use App\Services\StudentControlledCheckout;
 use App\Services\StudentControlledWallets;
+use App\Services\StudentPaymentProgress;
 use Elliptic\EC;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Vite;
 use Illuminate\Validation\ValidationException;
 use kornrunner\Keccak;
@@ -41,6 +52,12 @@ use Yukazakiri\Lepton\DTOs\HttpResponse;
 beforeEach(function (): void {
     config(['student-wallets.enabled' => true, 'lepton.arc.chain' => 'ARC-TESTNET', 'lepton.arc.chain_id' => 5042002,
         'lepton.arc.treasury' => '0x'.str_repeat('b', 40)]);
+    /** @var Organization $institution */
+    $institution = Organization::factory()->create();
+    config(['eduflow.institution_id' => $institution->id]);
+    Wallet::factory()->create(['organization_id' => $institution->id, 'address' => config('lepton.arc.treasury'), 'status' => 'active']);
+    $owner = User::factory()->create(['organization_id' => $institution->id])->assignRole(Role::findOrCreate('finance_officer', 'web'));
+    config(['eduflow.student_tuition.intake_owner_id' => $owner->id]);
     Role::findOrCreate('student', 'web');
     $this->student = Student::factory()->withoutPayoutAddress()->create();
     $this->actingAs($this->student->user->assignRole('student'));
@@ -122,6 +139,9 @@ test('one verified testnet transfer credits tuition only once', function (): voi
     $this->receipt = controlledReceipt($payment);
     $hash = '0x'.str_repeat('c', 64);
     $service->confirm($this->student, $payment, $hash);
+    if ($payment->tuition_account_id !== null) {
+        $service->recordSettlement($payment->fresh());
+    }
     $service->confirm($this->student, $payment->fresh(), $hash);
     expect($account->fresh()->paid_amount)->toBe(2000000)
         ->and($payment->fresh()->posted_at)->not->toBeNull();
@@ -584,6 +604,9 @@ test('settled student tuition payment bridges into Transaction, StudentTuitionPa
     $hash = '0x'.str_repeat('e', 64);
 
     $service->confirm($this->student, $payment, $hash);
+    if ($payment->tuition_account_id !== null) {
+        $service->recordSettlement($payment->fresh());
+    }
 
     $tuitionPayment = StudentTuitionPayment::query()->where('tx_hash', $hash)->first();
     expect($tuitionPayment)->not->toBeNull()
@@ -617,7 +640,7 @@ test('settled student tuition payment bridges into Transaction, StudentTuitionPa
         ->and(CollectionBatch::query()->where('student_tuition_payment_id', $tuitionPayment->id)->count())->toBe(1);
 });
 
-test('settled campus bill payment bridges into Transaction, StudentBillPayment, and CollectionBatch', function (): void {
+test('settled campus bill preserves tuition credit without inventing operator consent', function (): void {
     controlledWallet($this->student, $this->address);
     $bill = StudentBill::factory()->create(['student_id' => $this->student->id, 'amount_base_units' => 2000000, 'paid_base_units' => 0]);
     $service = app(StudentControlledCheckout::class);
@@ -625,28 +648,10 @@ test('settled campus bill payment bridges into Transaction, StudentBillPayment, 
     $this->transaction = controlledTransfer($payment);
     $this->receipt = controlledReceipt($payment);
     $hash = '0x'.str_repeat('f', 64);
-
     $service->confirm($this->student, $payment, $hash);
-
-    $billPayment = StudentBillPayment::query()->where('tx_hash', $hash)->first();
-    expect($billPayment)->not->toBeNull()
-        ->and($billPayment->request_key)->toBe($payment->id)
-        ->and($billPayment->amount_base_units)->toBe(2000000)
-        ->and($billPayment->applied_base_units)->toBe(2000000)
-        ->and($billPayment->submission_state)->toBe(StudentBillPayment::SUBMISSION_VERIFIED);
-
-    $tx = Transaction::query()->where('provider_tx_hash', $hash)->first();
-    expect($tx)->not->toBeNull()
-        ->and($tx->type)->toBe(TransactionType::TUITION_REVENUE)
-        ->and($tx->status)->toBe(TransactionStatus::CONFIRMED)
-        ->and($tx->amount)->toBe(2.0);
-
-    $batch = CollectionBatch::query()->where('student_bill_payment_id', $billPayment->id)->first();
-    expect($batch)->not->toBeNull()
-        ->and($batch->received_minor_units)->toBe(2000000);
-
-    expect($payment->fresh()->billPayment?->id)->toBe($billPayment->id)
-        ->and($payment->fresh()->transaction?->id)->toBe($tx->id);
+    expect($bill->fresh()->paid_base_units)->toBe(2000000);
+    expect(fn () => $service->recordSettlement($payment->fresh()))->toThrow(ValidationException::class);
+    expect(StudentBillPayment::query()->count())->toBe(0);
 });
 
 test('backfill command bridges settled payments missing Transaction or CollectionBatch', function (): void {
@@ -659,7 +664,7 @@ test('backfill command bridges settled payments missing Transaction or Collectio
     // Simulate historical payment that settled before the bridging fix
     $payment->forceFill([
         'tx_hash' => $hash,
-        'evidence' => ['verdict' => 'verified', 'receipt' => ['gasUsed' => '0x5208']],
+        'evidence' => ['verdict' => 'verified', 'settled' => true, 'receipt' => ['gasUsed' => '0x5208']],
         'applied_base_units' => 3000000,
         'overpayment_base_units' => 0,
         'posted_at' => now()->subDay(),
@@ -726,6 +731,9 @@ test('admin and finance dashboards and relation managers reflect bridged student
     $hash = '0x'.str_repeat('8', 64);
 
     $service->confirm($this->student, $payment, $hash);
+    if ($payment->tuition_account_id !== null) {
+        $service->recordSettlement($payment->fresh());
+    }
 
     $tuitionPayment = StudentTuitionPayment::query()->where('tx_hash', $hash)->firstOrFail();
 
@@ -831,4 +839,72 @@ test('payment receipt notification supports email and states testnet limitations
     $mail = $notification->toMail($this->student->user);
     expect(implode(' ', $mail->introLines))->toContain('not proof of official college tuition payment')
         ->and($mail->actionUrl)->toBe(route('payments.index'));
+});
+
+test('background receipt reconciliation is idempotent and never creates spending authority', function (): void {
+    controlledWallet($this->student, $this->address);
+    $institutionId = (int) config('eduflow.institution_id');
+    $this->student->forceFill(['organization_id' => $institutionId])->save();
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $checkout = app(StudentControlledCheckout::class);
+    $payment = $checkout->create($this->student, 'tuition', $account->id, 2000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $checkout->confirm($this->student, $payment, '0x'.str_repeat('7', 64));
+    expect(Transaction::query()->count())->toBe(0);
+    $job = new ReconcileStudentControlledPayment($payment->id);
+    app()->call([$job, 'handle']);
+    app()->call([$job, 'handle']);
+    expect(Transaction::query()->count())->toBe(1)
+        ->and(CollectionBatch::query()->count())->toBe(1)
+        ->and(CollectionBatchReview::query()->count())->toBe(0)
+        ->and(PaymentAuthorization::query()->count())->toBe(0)
+        ->and($account->fresh()->paid_amount)->toBe(2000000)
+        ->and(app(InstallationInstitution::class)->current()?->id)->toBe($institutionId);
+    $steps = app(StudentPaymentProgress::class)->forPayment($payment->fresh());
+    expect(array_column($steps, 'stage'))->toContain('receipt', 'classification', 'authorization');
+});
+
+test('missing intake owner never grants a role and backfill reports incomplete reconciliation', function (): void {
+    controlledWallet($this->student, $this->address);
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $checkout = app(StudentControlledCheckout::class);
+    $payment = $checkout->create($this->student, 'tuition', $account->id, 2000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $checkout->confirm($this->student, $payment, '0x'.str_repeat('6', 64));
+    config(['eduflow.student_tuition.intake_owner_id' => null]);
+    $beforeUsers = User::query()->count();
+    $beforeRoles = DB::table('model_has_roles')->count();
+    $this->artisan('app:backfill-student-controlled-payments', ['--payment' => $payment->id])
+        ->expectsOutputToContain('[INCOMPLETE]')->assertFailed();
+    expect(User::query()->count())->toBe($beforeUsers)
+        ->and(DB::table('model_has_roles')->count())->toBe($beforeRoles)
+        ->and(CollectionBatch::query()->count())->toBe(0)
+        ->and($account->fresh()->paid_amount)->toBe(2000000);
+});
+
+test('configured background classification queues once without approving receipts', function (): void {
+    $institutionId = (int) config('eduflow.institution_id');
+    $context = institutionPolicyContext();
+    $context['reviewer']->forceFill(['organization_id' => $institutionId])->save();
+    config(['eduflow.institution_policy.classification_engine' => 'text', 'eduflow.autonomous_pipeline.reviewer_id' => $context['reviewer']->id]);
+    $published = pilotPublishedDefaultPolicy($context);
+    Bus::fake();
+    controlledWallet($this->student, $this->address);
+    $this->student->forceFill(['organization_id' => $institutionId])->save();
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $checkout = app(StudentControlledCheckout::class);
+    $payment = $checkout->create($this->student, 'tuition', $account->id, 2000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $checkout->confirm($this->student, $payment, '0x'.str_repeat('4', 64));
+    $job = new ReconcileStudentControlledPayment($payment->id);
+    app()->call([$job, 'handle']);
+    app()->call([$job, 'handle']);
+    expect(InstitutionPolicyEvaluation::query()->count())->toBe(1)
+        ->and(InstitutionPolicyEvaluation::query()->sole()->state)->toBe('queued')
+        ->and(CollectionBatchReview::query()->count())->toBe(0)
+        ->and(PaymentAuthorization::query()->count())->toBe(0);
+    Bus::assertDispatchedTimes(EvaluateInstitutionPolicy::class, 1);
 });

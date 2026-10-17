@@ -211,6 +211,7 @@ interface StudentPayPageProps {
     controlledPayments?: {
         id: string;
         tx_hash: string | null;
+        progress?: { stage: string; message: string; status: string; at: string | null }[];
         via_circle: boolean;
         approval_started: boolean;
         is_expired: boolean;
@@ -820,6 +821,7 @@ export default function StudentPayPage({
 
     usePoll(shouldFastPoll ? 2500 : 8000, {
         only: [
+            'controlledPayments',
             'tuitionAttempts',
             'tuitionAccount',
             'wallet',
@@ -1635,6 +1637,31 @@ export default function StudentPayPage({
 
             <div className="bulletin clay-ambient min-h-full w-full">
                 <div className="mx-auto flex w-full max-w-[1380px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+                    {controlledPayments[0]?.progress && (
+                        <section className="clay-card p-5 sm:p-6" aria-labelledby="payment-progress-heading">
+                            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                    <p className="bulletin-eyebrow">Payment activity</p>
+                                    <h2 id="payment-progress-heading" className="clay-h2">Receipt and policy progress</h2>
+                                </div>
+                                <span className="clay-meta text-xs">Recorded events · refreshes automatically</span>
+                            </div>
+                            <ol className="space-y-4 border-l border-[var(--clay-border)] pl-5" aria-live="polite" aria-relevant="additions text">
+                                {controlledPayments[0].progress.map((event, index) => (
+                                    <li key={`${event.stage}-${index}`} className="relative space-y-1">
+                                        <span aria-hidden="true" className="absolute -left-[25px] top-1 size-2 rounded-full bg-[var(--clay-primary)]" />
+                                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                                            <span className="font-semibold capitalize">{event.stage.replaceAll('_', ' ')}</span>
+                                            <span className="clay-meta">{event.status}</span>
+                                            {event.at && <time className="clay-meta" dateTime={event.at}>{new Date(event.at).toLocaleString()}</time>}
+                                        </div>
+                                        <p className="clay-meta max-w-3xl text-sm">{event.message}</p>
+                                    </li>
+                                ))}
+                            </ol>
+                            <p className="clay-meta mt-5 border-t border-[var(--clay-border)] pt-3 text-xs">Tuition credit and institution spending are separate. Classification does not authorize a transfer.</p>
+                        </section>
+                    )}
                     {/* -- Top Bar: Back Link + Network Telemetry + Mode Switcher -- */}
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex flex-wrap items-center gap-3">
