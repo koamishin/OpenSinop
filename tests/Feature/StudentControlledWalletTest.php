@@ -2,11 +2,26 @@
 
 declare(strict_types=1);
 
+use App\Enums\TransactionStatus;
+use App\Enums\TransactionType;
+use App\Filament\Finance\Widgets\CollectionsOverviewWidget;
+use App\Filament\Finance\Widgets\CollectionsTrendChart;
+use App\Filament\Pages\Collections;
+use App\Filament\Resources\Transactions\Tables\TransactionsTable;
+use App\Filament\Resources\TuitionAccounts\Pages\ViewTuitionAccount;
+use App\Filament\Resources\TuitionAccounts\RelationManagers\PaymentsRelationManager;
+use App\Filament\Widgets\AdoptionActivityChart;
+use App\Filament\Widgets\TreasuryOverviewWidget;
+use App\Models\CollectionBatch;
 use App\Models\Student;
 use App\Models\StudentBill;
+use App\Models\StudentBillPayment;
 use App\Models\StudentControlledPayment;
+use App\Models\StudentTuitionPayment;
 use App\Models\StudentWallet;
+use App\Models\Transaction;
 use App\Models\TuitionAccount;
+use App\Models\User;
 use App\Notifications\StudentControlledPaymentSettled;
 use App\Services\ArcSettlementVerifier;
 use App\Services\CircleStudentWallets;
@@ -16,6 +31,7 @@ use Elliptic\EC;
 use Illuminate\Support\Facades\Vite;
 use Illuminate\Validation\ValidationException;
 use kornrunner\Keccak;
+use Livewire\Livewire;
 use Mockery\MockInterface;
 use Spatie\Permission\Models\Role;
 use Yukazakiri\Lepton\Contracts\ArcNetworkGateway;
@@ -556,6 +572,202 @@ test('gas preview never creates payment records or reserves an approval', functi
     $this->postJson(route('student.controlled-wallet.estimate'), ['kind' => 'tuition', 'account_id' => $account->id, 'amount' => '1'])->assertSuccessful()->assertJson(['fee_paid_by' => 'student']);
     $this->postJson(route('student.controlled-wallet.estimate'), ['kind' => 'tuition', 'account_id' => $account->id, 'amount' => '2'])->assertSuccessful();
     expect(StudentControlledPayment::query()->count())->toBe(0);
+});
+
+test('settled student tuition payment bridges into Transaction, StudentTuitionPayment, and CollectionBatch', function (): void {
+    controlledWallet($this->student, $this->address);
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $service = app(StudentControlledCheckout::class);
+    $payment = $service->create($this->student, 'tuition', $account->id, 2000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $hash = '0x'.str_repeat('e', 64);
+
+    $service->confirm($this->student, $payment, $hash);
+
+    $tuitionPayment = StudentTuitionPayment::query()->where('tx_hash', $hash)->first();
+    expect($tuitionPayment)->not->toBeNull()
+        ->and($tuitionPayment->request_key)->toBe($payment->id)
+        ->and($tuitionPayment->amount_base_units)->toBe(2000000)
+        ->and($tuitionPayment->applied_base_units)->toBe(2000000)
+        ->and($tuitionPayment->overpayment_base_units)->toBe(0)
+        ->and($tuitionPayment->tx_verified_on_chain)->toBeTrue()
+        ->and($tuitionPayment->simulated)->toBeFalse();
+
+    $tx = Transaction::query()->where('provider_tx_hash', $hash)->first();
+    expect($tx)->not->toBeNull()
+        ->and($tx->type)->toBe(TransactionType::TUITION_REVENUE)
+        ->and($tx->status)->toBe(TransactionStatus::CONFIRMED)
+        ->and($tx->amount)->toBe(2.0)
+        ->and($tx->reference_type)->toBe(StudentTuitionPayment::class)
+        ->and($tx->reference_id)->toBe($tuitionPayment->id);
+
+    $batch = CollectionBatch::query()->where('student_tuition_payment_id', $tuitionPayment->id)->first();
+    expect($batch)->not->toBeNull()
+        ->and($batch->received_minor_units)->toBe(2000000)
+        ->and($batch->restricted_minor_units)->toBe(0);
+
+    expect($payment->fresh()->tuitionPayment?->id)->toBe($tuitionPayment->id)
+        ->and($payment->fresh()->transaction?->id)->toBe($tx->id);
+
+    // Idempotency: re-confirming changes nothing and creates no duplicates
+    $service->confirm($this->student, $payment->fresh(), $hash);
+    expect(StudentTuitionPayment::query()->where('tx_hash', $hash)->count())->toBe(1)
+        ->and(Transaction::query()->where('provider_tx_hash', $hash)->count())->toBe(1)
+        ->and(CollectionBatch::query()->where('student_tuition_payment_id', $tuitionPayment->id)->count())->toBe(1);
+});
+
+test('settled campus bill payment bridges into Transaction, StudentBillPayment, and CollectionBatch', function (): void {
+    controlledWallet($this->student, $this->address);
+    $bill = StudentBill::factory()->create(['student_id' => $this->student->id, 'amount_base_units' => 2000000, 'paid_base_units' => 0]);
+    $service = app(StudentControlledCheckout::class);
+    $payment = $service->create($this->student, 'bill', $bill->id, 2000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $hash = '0x'.str_repeat('f', 64);
+
+    $service->confirm($this->student, $payment, $hash);
+
+    $billPayment = StudentBillPayment::query()->where('tx_hash', $hash)->first();
+    expect($billPayment)->not->toBeNull()
+        ->and($billPayment->request_key)->toBe($payment->id)
+        ->and($billPayment->amount_base_units)->toBe(2000000)
+        ->and($billPayment->applied_base_units)->toBe(2000000)
+        ->and($billPayment->submission_state)->toBe(StudentBillPayment::SUBMISSION_VERIFIED);
+
+    $tx = Transaction::query()->where('provider_tx_hash', $hash)->first();
+    expect($tx)->not->toBeNull()
+        ->and($tx->type)->toBe(TransactionType::TUITION_REVENUE)
+        ->and($tx->status)->toBe(TransactionStatus::CONFIRMED)
+        ->and($tx->amount)->toBe(2.0);
+
+    $batch = CollectionBatch::query()->where('student_bill_payment_id', $billPayment->id)->first();
+    expect($batch)->not->toBeNull()
+        ->and($batch->received_minor_units)->toBe(2000000);
+
+    expect($payment->fresh()->billPayment?->id)->toBe($billPayment->id)
+        ->and($payment->fresh()->transaction?->id)->toBe($tx->id);
+});
+
+test('backfill command bridges settled payments missing Transaction or CollectionBatch', function (): void {
+    controlledWallet($this->student, $this->address);
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $service = app(StudentControlledCheckout::class);
+    $payment = $service->create($this->student, 'tuition', $account->id, 3000000);
+    $hash = '0x'.str_repeat('9', 64);
+
+    // Simulate historical payment that settled before the bridging fix
+    $payment->forceFill([
+        'tx_hash' => $hash,
+        'evidence' => ['verdict' => 'verified', 'receipt' => ['gasUsed' => '0x5208']],
+        'applied_base_units' => 3000000,
+        'overpayment_base_units' => 0,
+        'posted_at' => now()->subDay(),
+    ])->save();
+
+    expect(Transaction::query()->where('provider_tx_hash', $hash)->exists())->toBeFalse()
+        ->and(StudentTuitionPayment::query()->where('tx_hash', $hash)->exists())->toBeFalse();
+
+    // Dry run does not commit changes
+    $this->artisan('app:backfill-student-controlled-payments', ['--dry-run' => true, '--payment' => $payment->id])
+        ->expectsOutputToContain('[DRY RUN]')
+        ->assertSuccessful();
+
+    expect(Transaction::query()->where('provider_tx_hash', $hash)->exists())->toBeFalse();
+
+    // Actual backfill creates Transaction, StudentTuitionPayment, and CollectionBatch
+    $this->artisan('app:backfill-student-controlled-payments', ['--payment' => $payment->id])
+        ->expectsOutputToContain('[SYNCED]')
+        ->assertSuccessful();
+
+    $tuitionPayment = StudentTuitionPayment::query()->where('tx_hash', $hash)->first();
+    expect($tuitionPayment)->not->toBeNull()
+        ->and($tuitionPayment->amount_base_units)->toBe(3000000);
+
+    $tx = Transaction::query()->where('provider_tx_hash', $hash)->first();
+    expect($tx)->not->toBeNull()
+        ->and($tx->type)->toBe(TransactionType::TUITION_REVENUE)
+        ->and($tx->status)->toBe(TransactionStatus::CONFIRMED);
+
+    $batch = CollectionBatch::query()->where('student_tuition_payment_id', $tuitionPayment->id)->first();
+    expect($batch)->not->toBeNull();
+
+    // Subsequent run indicates already complete
+    $this->artisan('app:backfill-student-controlled-payments', ['--payment' => $payment->id])
+        ->expectsOutputToContain('[OK]')
+        ->assertSuccessful();
+});
+
+test('TransactionsTable displays settlement label and color for verified transactions', function (): void {
+    $tx = new Transaction([
+        'provider_tx_hash' => '0x'.str_repeat('a', 64),
+        'network' => 'arc',
+        'metadata' => [
+            'reconciliation' => 'verified',
+        ],
+    ]);
+
+    expect(TransactionsTable::settlementLabel($tx))->toBe('Verified on-chain')
+        ->and(TransactionsTable::settlementColor($tx))->toBe('success')
+        ->and(TransactionsTable::settlementTooltip($tx))->toContain('transfer is verified on-chain');
+});
+
+test('admin and finance dashboards and relation managers reflect bridged student payments', function (): void {
+    Role::findOrCreate('super_admin', 'web');
+    Role::findOrCreate('admin', 'web');
+    Role::findOrCreate('finance_officer', 'web');
+
+    controlledWallet($this->student, $this->address);
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $service = app(StudentControlledCheckout::class);
+    $payment = $service->create($this->student, 'tuition', $account->id, 5000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $hash = '0x'.str_repeat('8', 64);
+
+    $service->confirm($this->student, $payment, $hash);
+
+    $tuitionPayment = StudentTuitionPayment::query()->where('tx_hash', $hash)->firstOrFail();
+
+    // 1. PaymentsRelationManager under Tuition Account displays the payment
+    $admin = User::factory()->create()->assignRole('admin');
+    $this->actingAs($admin);
+    Livewire::test(PaymentsRelationManager::class, [
+        'ownerRecord' => $account->fresh(),
+        'pageClass' => ViewTuitionAccount::class,
+    ])
+        ->assertSuccessful()
+        ->assertSee('5.00 USDC')
+        ->assertSee($tuitionPayment->tx_hash);
+
+    // 2. TreasuryOverviewWidget renders evidence and ledger status
+    Livewire::test(TreasuryOverviewWidget::class)
+        ->assertSuccessful()
+        ->assertSee('Exact evidence records')
+        ->assertSee('Settlement status');
+
+    // 3. CollectionsOverviewWidget and CollectionsTrendChart in Finance
+    $financeOfficer = User::factory()->create()->assignRole('finance_officer');
+    $this->actingAs($financeOfficer);
+    Livewire::test(CollectionsOverviewWidget::class)
+        ->assertSuccessful()
+        ->assertSee('USDC')
+        ->assertSee('5.00');
+
+    Livewire::test(CollectionsTrendChart::class)
+        ->assertSuccessful();
+
+    // 4. AdoptionActivityChart renders activity
+    $this->actingAs($admin);
+    Livewire::test(AdoptionActivityChart::class)
+        ->assertSuccessful();
+
+    // 5. Collections page in Finance lists the batch
+    $batch = CollectionBatch::query()->where('student_tuition_payment_id', $tuitionPayment->id)->firstOrFail();
+    $this->actingAs($financeOfficer);
+    Livewire::test(Collections::class)
+        ->assertSuccessful()
+        ->assertSee($batch->source_reference);
 });
 
 test('student dashboard includes existing verified student-controlled payments without allocating twice', function (): void {

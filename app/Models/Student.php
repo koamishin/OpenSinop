@@ -25,6 +25,7 @@ use Spatie\Activitylog\Traits\LogsActivity;
  * @property string $academic_status
  * @property string|null $attendance_rate
  * @property string|null $payout_address
+ * @property int|null $organization_id
  * @property-read User $user
  * @property-read Collection<int, TuitionAccount> $tuitionAccounts
  * @property-read Collection<int, AssistanceRequest> $assistanceRequests

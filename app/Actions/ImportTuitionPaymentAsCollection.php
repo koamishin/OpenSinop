@@ -91,7 +91,11 @@ final readonly class ImportTuitionPaymentAsCollection
         Gate::forUser($actor)->authorize('create', CollectionBatch::class);
 
         $institution = $this->institutions->require();
+        $wallet = $institution->primaryWallet();
         $treasury = (string) config('lepton.arc.treasury');
+        if ($treasury === '' && $wallet !== null) {
+            $treasury = $wallet->address;
+        }
         $currency = 'USDC';
         $isBill = $payment instanceof StudentBillPayment;
         $linkColumn = $isBill ? 'student_bill_payment_id' : 'student_tuition_payment_id';

@@ -6,6 +6,7 @@ use App\Features\FeatureRegistry;
 use App\Policies\SettlementApprovalPolicy;
 use App\Services\ArcNetworkGateway;
 use App\Services\CircleAgentWalletCli;
+use App\Services\InstallationInstitution;
 use App\Services\Payments\AsyncPaymentTransport;
 use App\Services\Payments\CircleAgentHttpClient;
 use App\Services\Payments\CircleAgentWalletTransport;
@@ -45,6 +46,8 @@ class AppServiceProvider extends ServiceProvider
         $this->registerCircleWalletCli();
         $this->registerCircleHttpAuthDecorator();
         $this->registerArcNetworkGateway();
+
+        $this->app->scoped(InstallationInstitution::class);
 
         // The asynchronous rail is resolved from the container so it can be
         // substituted wholesale. Nothing about settlement should depend on

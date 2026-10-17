@@ -13,6 +13,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /**
  * @property int $id
  * @property string $name
+ * @property string|null $slug
+ * @property string|null $domain
+ * @property string|null $country
+ * @property string|null $timezone
+ * @property bool|null $is_setup_completed
  * @property string $type
  * @property string $currency
  * @property float $minimum_reserve

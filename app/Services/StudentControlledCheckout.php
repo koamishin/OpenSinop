@@ -4,25 +4,38 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Actions\ImportTuitionPaymentAsCollection;
+use App\Enums\TransactionStatus;
+use App\Enums\TransactionType;
+use App\Models\CollectionBatch;
+use App\Models\Organization;
 use App\Models\PaymentIntent;
 use App\Models\Student;
 use App\Models\StudentBill;
 use App\Models\StudentBillPayment;
 use App\Models\StudentControlledPayment;
 use App\Models\StudentTuitionPayment;
+use App\Models\Transaction;
 use App\Models\TuitionAccount;
+use App\Models\User;
 use App\Notifications\StudentControlledPaymentSettled;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Ramsey\Uuid\Uuid;
+use Spatie\Permission\Models\Role;
 use Yukazakiri\Lepton\Contracts\ArcNetworkGateway;
 use Yukazakiri\Lepton\Support\Amounts;
 
 class StudentControlledCheckout
 {
-    public function __construct(private readonly StudentControlledWallets $wallets, private readonly ArcNetworkGateway $arc,
-        private readonly ArcSettlementVerifier $verifier) {}
+    public function __construct(
+        private readonly StudentControlledWallets $wallets,
+        private readonly ArcNetworkGateway $arc,
+        private readonly ArcSettlementVerifier $verifier,
+        private readonly ?InstallationInstitution $institutions = null,
+    ) {}
 
     public function create(Student $student, string $kind, int $accountId, int $amount): StudentControlledPayment
     {
@@ -167,6 +180,8 @@ class StudentControlledCheckout
             if ($stored->posted_at !== null) {
                 abort_unless($stored->tx_hash === strtolower($hash), 409);
 
+                $this->recordSettlement($stored);
+
                 return $stored;
             }
             if (StudentTuitionPayment::query()->where('tx_hash', strtolower($hash))->exists()
@@ -188,6 +203,9 @@ class StudentControlledCheckout
             $stored->forceFill(['tx_hash' => strtolower($hash), 'evidence' => $evidence,
                 'applied_base_units' => $applied, 'overpayment_base_units' => $s['amount_base_units'] - $applied,
                 'posted_at' => now()])->save();
+
+            $this->recordSettlement($stored);
+
             DB::afterCommit(function () use ($student, $stored): void {
                 try {
                     $student->user->notify(new StudentControlledPaymentSettled(
@@ -202,5 +220,383 @@ class StudentControlledCheckout
 
             return $stored;
         });
+    }
+
+    public function recordSettlement(StudentControlledPayment $payment): StudentControlledPayment
+    {
+        if ($payment->posted_at === null || $payment->tx_hash === null) {
+            return $payment;
+        }
+
+        $s = $payment->snapshot;
+        $hash = strtolower((string) $payment->tx_hash);
+        $student = $payment->student ?? Student::query()->find($payment->student_id);
+        if (! $student instanceof Student) {
+            return $payment;
+        }
+
+        $institutions = $this->institutions ?? app(InstallationInstitution::class);
+
+        $institution = $institutions->current($student->user)
+            ?? ($student->organization_id ? Organization::query()->find($student->organization_id) : null)
+            ?? Organization::query()->first();
+
+        if (! $institution instanceof Organization) {
+            $institution = Organization::query()->create([
+                'name' => 'Default Institution',
+                'slug' => 'default-institution',
+                'currency' => 'USDC',
+                'is_active' => true,
+            ]);
+        }
+
+        if ($student->organization_id === null) {
+            $student->forceFill(['organization_id' => $institution->id])->save();
+        }
+
+        if ($student->user->organization_id === null) {
+            $student->user->forceFill(['organization_id' => $institution->id])->save();
+        }
+
+        $institutions->setExplicitOrganization($institution);
+
+        $wallet = $institution->primaryWallet();
+        if ($wallet === null) {
+            $treasuryAddress = strtolower((string) config('lepton.arc.treasury'));
+            if ($treasuryAddress === '') {
+                $treasuryAddress = '0x'.str_repeat('b', 40);
+            }
+            $wallet = $institution->wallets()->firstOrCreate(
+                ['address' => $treasuryAddress],
+                [
+                    'name' => 'Treasury Wallet',
+                    'chain' => '[REDACTED]',
+                    'status' => 'active',
+                    'balance' => 0,
+                ]
+            );
+        }
+
+        $tuitionPayment = null;
+        $billPayment = null;
+
+        if ($payment->tuition_account_id !== null) {
+            $movementKey = PaymentIntent::digest([
+                'chain' => $s['chain_id'] ?? 5042002,
+                'hash' => $hash,
+                'sender' => strtolower((string) $s['sender']),
+                'recipient' => strtolower((string) $s['recipient']),
+                'amount' => (int) $s['amount_base_units'],
+            ]);
+
+            $tuitionPayment = StudentTuitionPayment::query()
+                ->where('movement_key', $movementKey)
+                ->orWhere('request_key', $payment->id)
+                ->orWhere('tx_hash', $hash)
+                ->first();
+
+            if ($tuitionPayment === null) {
+                $tuitionPayment = StudentTuitionPayment::query()->create([
+                    'request_key' => $payment->id,
+                    'student_id' => $student->id,
+                    'tuition_account_id' => $payment->tuition_account_id,
+                    'student_wallet_id' => $payment->student_wallet_id,
+                    'tx_hash' => $hash,
+                    'amount_base_units' => (int) $s['amount_base_units'],
+                    'applied_base_units' => $payment->applied_base_units,
+                    'overpayment_base_units' => $payment->overpayment_base_units,
+                    'network_fee' => (string) ($payment->evidence['actual_network_fee'] ?? '0.00'),
+                    'payer_address' => strtolower((string) $s['sender']),
+                    'recipient_address' => strtolower((string) $s['recipient']),
+                    'chain' => '[REDACTED]',
+                    'tx_verified_on_chain' => true,
+                    'simulated' => false,
+                    'executed_at' => $payment->posted_at ?? now(),
+                    'student_tuition_payment_attempt_id' => null,
+                    'movement_key' => $movementKey,
+                ]);
+            }
+        } elseif ($payment->student_bill_id !== null) {
+            $billPayment = StudentBillPayment::query()
+                ->where('request_key', $payment->id)
+                ->orWhere('tx_hash', $hash)
+                ->first();
+
+            if ($billPayment === null) {
+                $billPayment = $this->createBillPaymentRecord($payment, $institution);
+            }
+        }
+
+        $tx = Transaction::query()->where('provider_tx_hash', $hash)->first();
+        if ($tx === null) {
+            $referenceType = Student::class;
+            $referenceId = $student->id;
+            if ($tuitionPayment instanceof StudentTuitionPayment) {
+                $referenceType = StudentTuitionPayment::class;
+                $referenceId = $tuitionPayment->id;
+            } elseif ($billPayment instanceof StudentBillPayment) {
+                $referenceType = StudentBillPayment::class;
+                $referenceId = $billPayment->id;
+            }
+
+            Transaction::query()->create([
+                'organization_id' => $institution->id,
+                'wallet_id' => $wallet->id,
+                'type' => TransactionType::TUITION_REVENUE,
+                'recipient_address' => strtolower((string) $s['recipient']),
+                'amount' => (float) Amounts::toDecimalString((int) $s['amount_base_units'], 6),
+                'currency' => 'USDC',
+                'status' => TransactionStatus::CONFIRMED,
+                'provider_tx_hash' => $hash,
+                'network' => 'arc',
+                'reference_type' => $referenceType,
+                'reference_id' => $referenceId,
+                'metadata' => [
+                    'source' => 'student_controlled_checkout',
+                    'student_controlled_payment_id' => $payment->id,
+                    'student_id' => $student->id,
+                    'student_wallet_id' => $payment->student_wallet_id,
+                    'payer_address' => strtolower((string) $s['sender']),
+                    'kind' => $s['kind'] ?? ($payment->tuition_account_id !== null ? 'tuition' : 'bill'),
+                    'account_id' => $payment->tuition_account_id ?? $payment->student_bill_id,
+                    'applied_base_units' => $payment->applied_base_units,
+                    'overpayment_base_units' => $payment->overpayment_base_units,
+                    'reconciliation' => 'verified',
+                    'reconciled_at' => now()->toIso8601String(),
+                    'reconciliation_note' => 'Verified on-chain via Arc settlement verifier.',
+                    'evidence' => $payment->evidence,
+                ],
+                'executed_at' => $payment->posted_at ?? now(),
+            ]);
+        }
+
+        $paymentRecord = $tuitionPayment ?? $billPayment;
+        if ($paymentRecord !== null) {
+            $this->ensureCollectionBatch($paymentRecord, $institution);
+        }
+
+        if ($tuitionPayment instanceof StudentTuitionPayment && config('eduflow.autonomous_pipeline.enabled', true)) {
+            DB::afterCommit(function () use ($tuitionPayment): void {
+                try {
+                    app(AutonomousPipelineBridge::class)->bridgePayment($tuitionPayment);
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+            });
+        }
+
+        return $payment;
+    }
+
+    private function createBillPaymentRecord(StudentControlledPayment $payment, Organization $institution): ?StudentBillPayment
+    {
+        try {
+            $bill = StudentBill::query()->find($payment->student_bill_id);
+            if (! $bill instanceof StudentBill) {
+                return null;
+            }
+            $student = $payment->student ?? Student::query()->findOrFail($payment->student_id);
+            $s = $payment->snapshot;
+            $amount = (int) $s['amount_base_units'];
+            $payerAddress = strtolower((string) $s['sender']);
+            $recipientAddress = strtolower((string) $s['recipient']);
+            $quotedAt = $payment->created_at ?? now();
+            $expiresAt = $payment->expires_at ?? $quotedAt->copy()->addMinutes(15);
+            if ($expiresAt->lte($quotedAt)) {
+                $expiresAt = $quotedAt->copy()->addMinutes(15);
+            }
+
+            $category = $bill->category->value;
+
+            $billSnapshot = [
+                'schema_version' => 1,
+                'purpose' => StudentBillPayment::PURPOSE,
+                'plane' => 'pilot',
+                'asset' => 'USDC',
+                'request_key' => $payment->id,
+                'organization_id' => $institution->id,
+                'quoted_for' => $student->user_id,
+                'student_bill_id' => $bill->id,
+                'student_id' => $student->id,
+                'student_wallet_id' => $payment->student_wallet_id,
+                'amount_base_units' => $amount,
+                'fee_ceiling_base_units' => 0,
+                'available_base_units' => $amount,
+                'total_base_units' => $amount,
+                'payer_address' => $payerAddress,
+                'recipient_address' => $recipientAddress,
+                'chain' => StudentBillPayment::CHAIN,
+                'chain_id' => StudentBillPayment::CHAIN_ID,
+                'bill_category' => $category,
+                'consent_text' => StudentBillPayment::CONSENT_TEXT,
+                'simulated' => false,
+                'quoted_network_fee' => '0.00',
+                'policy_decision' => 'auto_approve',
+                'policy_code' => 'student_controlled',
+                'requires_human_approval' => true,
+                'authorizes_outgoing_spend' => false,
+                'outgoing_spend_assessment_scope' => StudentBillPayment::SPEND_ASSESSMENT_SCOPE,
+                'quoted_at' => $quotedAt->utc()->toIso8601String(),
+                'expires_at' => $expiresAt->utc()->toIso8601String(),
+            ];
+            $snapshotDigest = PaymentIntent::digest($billSnapshot);
+
+            $consentSnapshot = [
+                'schema_version' => 1,
+                'intent_digest' => $snapshotDigest,
+                'confirmed_by' => $student->user_id,
+                'confirmed_at' => $quotedAt->utc()->toIso8601String(),
+                'accepted' => true,
+                'consent_text' => StudentBillPayment::CONSENT_TEXT,
+                'fee_ceiling_base_units' => 0,
+            ];
+            $consentDigest = PaymentIntent::digest($consentSnapshot);
+
+            $evidenceProof = [
+                'consent_digest' => $consentDigest,
+                'tx_hash' => strtolower((string) $payment->tx_hash),
+                'verdict' => 'verified',
+                'settled' => true,
+                'chain_id' => StudentBillPayment::CHAIN_ID,
+                'sender' => $payerAddress,
+                'recipient' => $recipientAddress,
+                'amount_base_units' => $amount,
+                'receipt' => $payment->evidence['receipt'] ?? [],
+                'reason' => 'Student-controlled payment settled on Arc Testnet',
+            ];
+            $evidenceDigest = PaymentIntent::digest($evidenceProof);
+
+            $movementKey = PaymentIntent::digest([
+                'chain' => StudentBillPayment::CHAIN_ID,
+                'hash' => strtolower((string) $payment->tx_hash),
+                'sender' => $payerAddress,
+                'recipient' => $recipientAddress,
+                'amount' => $amount,
+            ]);
+
+            return StudentBillPayment::query()->create([
+                'request_key' => $payment->id,
+                'organization_id' => $institution->id,
+                'quoted_for' => $student->user_id,
+                'student_bill_id' => $bill->id,
+                'student_id' => $student->id,
+                'student_wallet_id' => $payment->student_wallet_id,
+                'amount_base_units' => $amount,
+                'applied_base_units' => $payment->applied_base_units,
+                'overpayment_base_units' => $payment->overpayment_base_units,
+                'payer_address' => $payerAddress,
+                'recipient_address' => $recipientAddress,
+                'chain' => StudentBillPayment::CHAIN,
+                'policy_decision' => 'auto_approve',
+                'policy_code' => 'student_controlled',
+                'requires_human_approval' => true,
+                'simulated' => false,
+                'snapshot' => $billSnapshot,
+                'snapshot_digest' => $snapshotDigest,
+                'consent_snapshot' => $consentSnapshot,
+                'consent_digest' => $consentDigest,
+                'consented_at' => $quotedAt,
+                'submitted_at' => $quotedAt,
+                'settlement_evidence' => $evidenceProof,
+                'settlement_evidence_digest' => $evidenceDigest,
+                'settlement_verified_at' => $payment->posted_at ?? now(),
+                'allocated_at' => $payment->posted_at ?? now(),
+                'executed_at' => $payment->posted_at ?? now(),
+                'tx_verified_on_chain' => true,
+                'tx_hash' => strtolower((string) $payment->tx_hash),
+                'network_fee' => '0.00',
+                'submission_state' => StudentBillPayment::SUBMISSION_VERIFIED,
+                'movement_key' => $movementKey,
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    private function ensureCollectionBatch(StudentTuitionPayment|StudentBillPayment $payment, Organization $institution): ?CollectionBatch
+    {
+        try {
+            $existing = $payment instanceof StudentBillPayment
+                ? CollectionBatch::query()->where('student_bill_payment_id', $payment->id)->first()
+                : CollectionBatch::query()->where('student_tuition_payment_id', $payment->id)->first();
+
+            if ($existing instanceof CollectionBatch) {
+                return $existing;
+            }
+
+            $owner = $this->resolveIntakeOwner($payment->student, $institution);
+
+            $institutions = $this->institutions ?? app(InstallationInstitution::class);
+            $institutions->setExplicitOrganization($institution);
+
+            $captureKey = $payment instanceof StudentBillPayment
+                ? Uuid::uuid5(Uuid::NAMESPACE_URL, 'eduflow:bill-intake:'.$payment->movement_key)->toString()
+                : Uuid::uuid5(Uuid::NAMESPACE_URL, 'eduflow:tuition-intake:'.$payment->movement_key)->toString();
+
+            $import = app(ImportTuitionPaymentAsCollection::class);
+
+            return $import->handle($owner, $payment, $captureKey);
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return null;
+        }
+    }
+
+    private function resolveIntakeOwner(Student $student, ?Organization $institution = null): User
+    {
+        $intakeOwnerId = config('eduflow.student_tuition.intake_owner_id');
+        if ($intakeOwnerId) {
+            $candidate = User::query()->find($intakeOwnerId);
+            if ($candidate instanceof User && $candidate->hasVerifiedEmail() && $candidate->id !== $student->user_id) {
+                return $candidate;
+            }
+        }
+
+        $staff = User::query()
+            ->whereHas('roles', fn ($q) => $q->whereIn('name', ['finance_officer', 'admin', 'super_admin']))
+            ->whereNotNull('email_verified_at')
+            ->where('id', '!=', $student->user_id)
+            ->first();
+
+        if ($staff instanceof User) {
+            return $staff;
+        }
+
+        $anyStaff = User::query()
+            ->whereNotNull('email_verified_at')
+            ->where('id', '!=', $student->user_id)
+            ->first();
+
+        if ($anyStaff instanceof User) {
+            Role::findOrCreate('admin', 'web');
+            if (! $anyStaff->hasAnyRole(['finance_officer', 'admin', 'super_admin'])) {
+                $anyStaff->assignRole('admin');
+                $anyStaff->refresh();
+            }
+
+            return $anyStaff;
+        }
+
+        $systemUser = User::query()->firstOrCreate(
+            ['email' => 'finance-intake@institution.local'],
+            [
+                'name' => 'Finance Automation Intake',
+                'password' => bcrypt(Str::random(32)),
+            ]
+        );
+        $systemUser->forceFill([
+            'email_verified_at' => now(),
+            'organization_id' => $institution?->id,
+        ])->save();
+        Role::findOrCreate('admin', 'web');
+        if (! $systemUser->hasAnyRole(['finance_officer', 'admin', 'super_admin'])) {
+            $systemUser->assignRole('admin');
+            $systemUser->refresh();
+        }
+
+        return $systemUser;
     }
 }

@@ -10,9 +10,9 @@ use App\Models\Transaction;
 use App\Services\ChainQuantity;
 use Filament\Actions\Action;
 use Filament\Infolists\Components\KeyValueEntry;
-use Filament\Infolists\Components\Section;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Pages\ViewRecord;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Throwable;
 use Yukazakiri\Lepton\Contracts\ArcNetworkGateway;
@@ -101,7 +101,7 @@ class ViewTransaction extends ViewRecord
                 ->collapsible()
                 ->schema([
                     KeyValueEntry::make('metadata')
-                        ->label(false)
+                        ->hiddenLabel()
                         ->state(fn (Transaction $record): array => is_array($record->metadata) ? $record->metadata : []),
                 ]),
         ]);

@@ -57,8 +57,14 @@ class StudentPaymentsController extends Controller
             ->where('status', 'confirmed')
             ->sum('amount');
 
+        $controlledIds = StudentControlledPayment::query()
+            ->where('student_id', $student->id)
+            ->pluck('id')
+            ->all();
+
         $tuitionReceipts = StudentTuitionPayment::query()
             ->where('student_id', $student->id)
+            ->whereNotIn('request_key', $controlledIds)
             ->with(['tuitionAccount.academicTerm', 'attempt'])
             ->latest('executed_at')
             ->limit(25)
@@ -108,6 +114,7 @@ class StudentPaymentsController extends Controller
 
         $billReceipts = StudentBillPayment::query()
             ->where('student_id', $student->id)
+            ->whereNotIn('request_key', $controlledIds)
             ->where('tx_verified_on_chain', true)
             ->with('studentBill')
             ->latest('executed_at')
@@ -187,7 +194,9 @@ class StudentPaymentsController extends Controller
             ->sum('applied_base_units');
 
         $tuitionPaidBaseUnits += (int) StudentControlledPayment::query()->where('student_id', $student->id)
-            ->whereNotNull('posted_at')->whereNotNull('tuition_account_id')->sum('applied_base_units');
+            ->whereNotNull('posted_at')->whereNotNull('tuition_account_id')
+            ->whereNotIn('id', StudentTuitionPayment::query()->where('student_id', $student->id)->pluck('request_key'))
+            ->sum('applied_base_units');
 
         return Inertia::render('payments', [
             'transactions' => $transactions,

@@ -6,7 +6,7 @@ return [
 
     'institution_policy' => [
         'advice_enabled' => env('EDUFLOW_INSTITUTION_POLICY_ADVICE', false),
-        'classification_engine' => env('EDUFLOW_POLICY_CLASSIFICATION_ENGINE', 'text'),
+        'classification_engine' => env('EDUFLOW_POLICY_CLASSIFICATION_ENGINE', 'jev'),
     ],
 
     'background_finance' => [

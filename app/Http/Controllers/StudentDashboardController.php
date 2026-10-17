@@ -151,8 +151,14 @@ class StudentDashboardController extends Controller
                 'timestamp' => $transaction->executed_at?->timestamp ?? $transaction->created_at?->timestamp ?? 0,
             ]);
 
+        $controlledRequestKeys = StudentControlledPayment::query()
+            ->where('student_id', $student->id)
+            ->pluck('id')
+            ->all();
+
         $tuitionTxs = StudentTuitionPayment::query()
             ->where('student_id', $student->id)
+            ->whereNotIn('request_key', $controlledRequestKeys)
             ->with('tuitionAccount.academicTerm')
             ->latest('executed_at')
             ->limit(10)
@@ -181,6 +187,7 @@ class StudentDashboardController extends Controller
 
         $billTxs = StudentBillPayment::query()
             ->where('student_id', $student->id)
+            ->whereNotIn('request_key', $controlledRequestKeys)
             ->with('studentBill')
             ->latest('executed_at')
             ->limit(10)

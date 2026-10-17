@@ -158,11 +158,11 @@ return [
         */
         'local' => [
             'driver' => 'openai-compatible',
-            'url' => env('AI_LOCAL_URL', 'http://localhost:11434/v1'),
-            'key' => env('AI_LOCAL_API_KEY'),
+            'url' => env('AI_LOCAL_URL') ?: 'http://[REDACTED]:11434/v1',
+            'key' => env('AI_LOCAL_API_KEY') ?: 'local-key',
             'models' => [
                 'text' => [
-                    'default' => env('AI_LOCAL_MODEL', 'ag/gemini-3.8-flash-high'),
+                    'default' => env('AI_LOCAL_MODEL') ?: '[REDACTED]',
                 ],
             ],
         ],

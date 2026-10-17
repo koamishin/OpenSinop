@@ -310,7 +310,12 @@ final readonly class AutonomousPipelineBridge
      */
     public function bridgeLatest(?int $targetInvoiceId = null): array
     {
+        $institution = $this->institutions->current();
+        $wallet = $institution?->primaryWallet();
         $treasury = (string) config('lepton.arc.treasury');
+        if ($treasury === '' && $wallet !== null) {
+            $treasury = $wallet->address;
+        }
 
         /** @var StudentTuitionPayment|null $payment */
         $payment = StudentTuitionPayment::query()

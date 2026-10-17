@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Carbon;
 use LogicException;
 
@@ -27,6 +29,9 @@ use LogicException;
  * @property Carbon $expires_at
  * @property Carbon|null $approval_started_at
  * @property Carbon|null $posted_at
+ * @property-read StudentTuitionPayment|null $tuitionPayment
+ * @property-read StudentBillPayment|null $billPayment
+ * @property-read Transaction|null $transaction
  */
 class StudentControlledPayment extends Model
 {
@@ -60,5 +65,47 @@ class StudentControlledPayment extends Model
                 throw new LogicException('Payment evidence cannot be deleted.');
             }
         });
+    }
+
+    /** @return BelongsTo<Student, $this> */
+    public function student(): BelongsTo
+    {
+        return $this->belongsTo(Student::class);
+    }
+
+    /** @return BelongsTo<StudentWallet, $this> */
+    public function studentWallet(): BelongsTo
+    {
+        return $this->belongsTo(StudentWallet::class);
+    }
+
+    /** @return BelongsTo<TuitionAccount, $this> */
+    public function tuitionAccount(): BelongsTo
+    {
+        return $this->belongsTo(TuitionAccount::class);
+    }
+
+    /** @return BelongsTo<StudentBill, $this> */
+    public function studentBill(): BelongsTo
+    {
+        return $this->belongsTo(StudentBill::class);
+    }
+
+    /** @return HasOne<StudentTuitionPayment, $this> */
+    public function tuitionPayment(): HasOne
+    {
+        return $this->hasOne(StudentTuitionPayment::class, 'request_key', 'id');
+    }
+
+    /** @return HasOne<StudentBillPayment, $this> */
+    public function billPayment(): HasOne
+    {
+        return $this->hasOne(StudentBillPayment::class, 'request_key', 'id');
+    }
+
+    /** @return HasOne<Transaction, $this> */
+    public function transaction(): HasOne
+    {
+        return $this->hasOne(Transaction::class, 'provider_tx_hash', 'tx_hash');
     }
 }

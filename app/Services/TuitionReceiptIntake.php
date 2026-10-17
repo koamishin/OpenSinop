@@ -106,7 +106,13 @@ final readonly class TuitionReceiptIntake
      */
     public function pending(ImportTuitionPaymentAsCollection $import): Builder
     {
-        return $import->eligiblePayments((string) config('lepton.arc.treasury'))
+        $wallet = app(InstallationInstitution::class)->current()?->primaryWallet();
+        $treasury = (string) config('lepton.arc.treasury');
+        if ($treasury === '' && $wallet !== null) {
+            $treasury = $wallet->address;
+        }
+
+        return $import->eligiblePayments($treasury)
             ->whereNotNull('student_tuition_payment_attempt_id')
             ->whereNotNull('movement_key')
             ->whereHas('attempt', fn (Builder $attempt): Builder => $attempt->where('state', 'verified'))

@@ -210,6 +210,7 @@ class TransactionsTable
         }
 
         return match ($record->metadata['reconciliation'] ?? null) {
+            'verified' => 'Verified on-chain',
             'unresolved' => 'Unresolved',
             'pending' => 'In flight',
             'observed' => 'Provider only',
@@ -229,6 +230,7 @@ class TransactionsTable
         }
 
         return match ($record->metadata['reconciliation'] ?? null) {
+            'verified' => 'success',
             'unresolved' => 'warning',
             default => ($record->metadata['is_fake'] ?? false) === true ? 'warning' : 'info',
         };
@@ -241,6 +243,10 @@ class TransactionsTable
 
         if ($record->isReconciledFailed()) {
             return 'Reconciliation against '.strtoupper((string) $network).' found a receipt for this hash that reports failure. The chain proved it did not settle.';
+        }
+
+        if (($record->metadata['reconciliation'] ?? null) === 'verified') {
+            return 'A successful on-chain receipt exists on '.strtoupper((string) $network).'. The transfer is verified on-chain.';
         }
 
         if (($record->metadata['reconciliation'] ?? null) === 'unresolved') {

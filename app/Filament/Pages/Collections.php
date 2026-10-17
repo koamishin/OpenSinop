@@ -386,7 +386,11 @@ class Collections extends Page implements HasTable
      */
     private function reconcilablePaymentOptions(string $kind = 'tuition'): array
     {
+        $wallet = app(InstallationInstitution::class)->current()?->primaryWallet();
         $treasury = (string) config('lepton.arc.treasury');
+        if ($treasury === '' && $wallet !== null) {
+            $treasury = $wallet->address;
+        }
 
         $import = app(ImportTuitionPaymentAsCollection::class);
         $query = $kind === 'bill' ? $import->eligibleBillPayments($treasury) : $import->eligiblePayments($treasury);

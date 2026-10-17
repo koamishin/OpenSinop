@@ -40,6 +40,7 @@ use Spatie\Permission\Traits\HasRoles;
  * @property string $password
  * @property string|null $remember_token
  * @property string|null $wallet_address
+ * @property int|null $organization_id
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
