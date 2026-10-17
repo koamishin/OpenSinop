@@ -56,11 +56,11 @@ class ReconcileStudentControlledPayment implements ShouldQueue
             if ($batch === null || ! $actor instanceof User || $actor->organization_id !== $institutionId
                 || $actor->id === $student->user_id || ! $actor->hasVerifiedEmail()
                 || ! $actor->hasAnyRole(['admin', 'super_admin'])) {
-                return;
+                throw new \RuntimeException('Receipt or classification requester missing. Configure an existing verified institution admin; no roles or approvals were created.');
             }
             $publication = $policies->active();
             if ($publication === null) {
-                return;
+                throw new \RuntimeException('No active published institution policy; classification cannot start.');
             }
             $source = $evaluations->source($actor, 'collection', $batch->id);
             $key = Uuid::uuid5(Uuid::NAMESPACE_URL, 'student-receipt:'.$payment->id.':'.$source['source_digest'].':'.$publication->publication_digest)->toString();

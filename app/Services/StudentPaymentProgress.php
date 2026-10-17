@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\CollectionBatch;
+use App\Models\FinanceWorkflowRun;
 use App\Models\InstitutionPolicyEvaluation;
+use App\Models\ReceiptPlanTrigger;
 use App\Models\StudentControlledPayment;
 
 /** Student-safe projection of persisted facts. Reading progress never advances financial work. */
@@ -72,6 +74,29 @@ class StudentPaymentProgress
             }, 'status' => match ($evaluation->state) {
                 'completed' => 'completed', 'running' => 'running', 'queued' => 'waiting', default => 'held',
             }, 'at' => $evaluation->completed_at?->toIso8601String()];
+        }
+        $review = $batch->reviews()->first();
+        $approved = $review !== null && $review->decision === 'approve_receipts' && $review->hasValidEvidence($batch);
+        $steps[] = ['stage' => 'receipt_review', 'message' => $approved
+            ? 'Independent finance receipt review recorded.' : 'Waiting for independent finance receipt review.',
+            'status' => $approved ? 'completed' : 'waiting', 'at' => $review?->created_at?->toIso8601String()];
+        if ($approved) {
+            $trigger = ReceiptPlanTrigger::query()->where('organization_id', $batch->organization_id)
+                ->where('collection_batch_review_id', $review->id)->first();
+            $run = $trigger?->budget_snapshot_id === null ? null : FinanceWorkflowRun::query()
+                ->where('organization_id', $batch->organization_id)->where('budget_snapshot_id', $trigger->budget_snapshot_id)->first();
+            $validPlan = $run !== null && $run->hasValidResult();
+            $steps[] = ['stage' => 'planning', 'message' => match (true) {
+                $trigger === null => 'No approved receipt-to-budget route. Finance must supply planning context.',
+                $trigger->state === 'blocked' => 'Planning evidence needs finance review. No money moved.',
+                $run !== null && in_array($run->state, ['blocked', 'failed'], true) => 'Background planning paused for finance review.',
+                $validPlan && $run->state === 'waiting_for_review' => 'Budget proposal ready for finance review. No payment authorized.',
+                $validPlan && $run->state === 'completed' => 'Finance planning completed. Spending authorization remains separate.',
+                default => 'Approved receipt routing queued for background planning.',
+            }, 'status' => match (true) {
+                $trigger?->state === 'blocked', $run !== null && in_array($run->state, ['blocked', 'failed'], true) => 'held',
+                $validPlan => 'completed', default => 'waiting',
+            }, 'at' => $run?->heartbeat_at?->toIso8601String()];
         }
         $steps[] = ['stage' => 'authorization', 'message' => 'Finance must independently review receipts, planning evidence and spending authorization. No automated disbursement is authorized by this payment.', 'status' => 'waiting', 'at' => null];
 

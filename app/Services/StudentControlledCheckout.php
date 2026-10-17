@@ -7,7 +7,6 @@ namespace App\Services;
 use App\Actions\ImportTuitionPaymentAsCollection;
 use App\Enums\TransactionStatus;
 use App\Enums\TransactionType;
-use App\Jobs\ReconcileStudentControlledPayment;
 use App\Models\CollectionBatch;
 use App\Models\Organization;
 use App\Models\PaymentIntent;
@@ -21,7 +20,6 @@ use App\Models\TuitionAccount;
 use App\Models\User;
 use App\Notifications\StudentControlledPaymentSettled;
 use Brick\Math\BigDecimal;
-use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -205,6 +203,12 @@ class StudentControlledCheckout
                 'applied_base_units' => $applied, 'overpayment_base_units' => $s['amount_base_units'] - $applied,
                 'posted_at' => now()])->save();
 
+            // Record verified inflow locally before returning success; provider work stays queued.
+            try {
+                DB::transaction(fn () => $this->recordLockedSettlement($stored, reconcileReceipt: false));
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
             $this->recordSettlementAfterCommit($stored);
 
             DB::afterCommit(function () use ($student, $stored): void {
@@ -227,12 +231,7 @@ class StudentControlledCheckout
     {
         DB::afterCommit(function () use ($payment): void {
             try {
-                $connection = (string) config('queue.default');
-                if (! in_array(config('queue.connections.'.$connection.'.driver'), ['database', 'redis'], true)
-                    || (int) config('queue.connections.'.$connection.'.retry_after', 0) <= 120) {
-                    throw new \RuntimeException('Receipt reconciliation requires a durable queue with retry_after greater than 120 seconds. Recover with app:backfill-student-controlled-payments.');
-                }
-                Bus::dispatch(new ReconcileStudentControlledPayment($payment->id));
+                app(StudentReceiptDispatcher::class)->dispatchPayment($payment->id);
             } catch (\Throwable $exception) {
                 report($exception);
             }
@@ -248,7 +247,7 @@ class StudentControlledCheckout
         });
     }
 
-    private function recordLockedSettlement(StudentControlledPayment $payment): StudentControlledPayment
+    private function recordLockedSettlement(StudentControlledPayment $payment, bool $reconcileReceipt = true): StudentControlledPayment
     {
         if ($payment->posted_at === null || $payment->tx_hash === null
             || ($payment->evidence['verdict'] ?? null) !== 'verified'
@@ -322,7 +321,7 @@ class StudentControlledCheckout
                 ->orWhere('tx_hash', $hash)
                 ->first();
 
-            if ($billPayment === null) {
+            if ($billPayment === null && $reconcileReceipt) {
                 $billPayment = $this->createBillPaymentRecord($payment, $institution);
             }
         }
@@ -371,7 +370,7 @@ class StudentControlledCheckout
         }
 
         $paymentRecord = $tuitionPayment ?? $billPayment;
-        if ($paymentRecord !== null) {
+        if ($reconcileReceipt && $paymentRecord !== null) {
             $this->ensureCollectionBatch($paymentRecord, $institution);
         }
 

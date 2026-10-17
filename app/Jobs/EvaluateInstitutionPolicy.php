@@ -19,6 +19,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Laravel\Ai\Exceptions\RateLimitedException;
 use RuntimeException;
 use Throwable;
 
@@ -87,9 +88,12 @@ class EvaluateInstitutionPolicy implements ShouldQueue
                     'result_digest' => PaymentIntent::digest($result), 'completed_at' => now(), 'last_error' => null]);
         } catch (Throwable $exception) {
             report($exception);
-            $evaluation->checkpoint('needs_review', 'Evaluation stopped. Evidence or service unavailable; no financial action occurred.',
+            $message = $exception instanceof RateLimitedException
+                ? 'JEV provider rate limit reached. Finance must request a fresh evaluation after provider access is restored. No financial action occurred.'
+                : 'Evaluation unavailable or evidence changed. Refresh source and policy before requesting a new run.';
+            $evaluation->checkpoint('needs_review', $message,
                 ['state' => 'needs_review', 'completed_at' => now(),
-                    'last_error' => 'Evaluation unavailable or evidence changed. Refresh source and policy before requesting a new run.']);
+                    'last_error' => $message]);
         }
     }
 

@@ -65,3 +65,7 @@ Schedule::command('app:dispatch-policy-evaluations')->everyMinute()->withoutOver
 // Autonomous Pipeline Bridge: seamlessly reconcile tuition receipts, evaluate JEV policy, and disburse to approved vendors
 Schedule::command('eduflow:autonomous-pipeline-bridge --latest')->everyFiveMinutes()->withoutOverlapping(5)->onOneServer()
     ->when(fn (): bool => (bool) config('eduflow.autonomous_pipeline.enabled', false));
+
+// Recover committed student receipts after a missed wake. No signer or financial approval.
+Schedule::command('app:dispatch-student-receipts')->everyFiveMinutes()->withoutOverlapping(5)->onOneServer()
+    ->when(fn (): bool => (bool) config('eduflow.background_finance.enabled', false));

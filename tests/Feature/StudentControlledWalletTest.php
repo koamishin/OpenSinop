@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Actions\ReviewCollectionBatch;
 use App\Enums\TransactionStatus;
 use App\Enums\TransactionType;
 use App\Filament\Finance\Widgets\CollectionsOverviewWidget;
@@ -36,6 +37,7 @@ use App\Services\InstallationInstitution;
 use App\Services\StudentControlledCheckout;
 use App\Services\StudentControlledWallets;
 use App\Services\StudentPaymentProgress;
+use App\Services\StudentReceiptDispatcher;
 use Elliptic\EC;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
@@ -851,10 +853,11 @@ test('background receipt reconciliation is idempotent and never creates spending
     $this->transaction = controlledTransfer($payment);
     $this->receipt = controlledReceipt($payment);
     $checkout->confirm($this->student, $payment, '0x'.str_repeat('7', 64));
-    expect(Transaction::query()->count())->toBe(0);
+    expect(Transaction::query()->count())->toBe(1);
     $job = new ReconcileStudentControlledPayment($payment->id);
-    app()->call([$job, 'handle']);
-    app()->call([$job, 'handle']);
+    config(['eduflow.autonomous_pipeline.reviewer_id' => $this->student->user_id]);
+    expect(fn () => app()->call([$job, 'handle']))->toThrow(RuntimeException::class);
+    expect(fn () => app()->call([$job, 'handle']))->toThrow(RuntimeException::class);
     expect(Transaction::query()->count())->toBe(1)
         ->and(CollectionBatch::query()->count())->toBe(1)
         ->and(CollectionBatchReview::query()->count())->toBe(0)
@@ -907,4 +910,128 @@ test('configured background classification queues once without approving receipt
         ->and(CollectionBatchReview::query()->count())->toBe(0)
         ->and(PaymentAuthorization::query()->count())->toBe(0);
     Bus::assertDispatchedTimes(EvaluateInstitutionPolicy::class, 1);
+});
+
+test('receipt recovery dispatch is leased and rejects sync queues', function (): void {
+    controlledWallet($this->student, $this->address);
+    $this->student->forceFill(['organization_id' => (int) config('eduflow.institution_id')])->save();
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $checkout = app(StudentControlledCheckout::class);
+    $payment = $checkout->create($this->student, 'tuition', $account->id, 2000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $checkout->confirm($this->student, $payment, '0x'.str_repeat('2', 64));
+    Bus::fake();
+    config(['queue.default' => 'database', 'queue.connections.database.retry_after' => 360]);
+    $dispatcher = app(StudentReceiptDispatcher::class);
+    $this->travel(181)->seconds();
+    expect($dispatcher->dispatchPayment($payment->id))->toBeTrue()
+        ->and($dispatcher->dispatchPayment($payment->id))->toBeFalse();
+    Bus::assertDispatchedTimes(ReconcileStudentControlledPayment::class, 1);
+    $this->travel(181)->seconds();
+    expect($dispatcher->dispatchPayment($payment->id))->toBeTrue();
+    Bus::assertDispatchedTimes(ReconcileStudentControlledPayment::class, 2);
+    config(['queue.default' => 'sync']);
+    expect(fn () => $dispatcher->dispatchPayment($payment->id))->toThrow(ValidationException::class);
+    expect(PaymentAuthorization::query()->count())->toBe(0);
+});
+
+test('timeline reports real independent receipt review and missing planning route', function (): void {
+    controlledWallet($this->student, $this->address);
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $checkout = app(StudentControlledCheckout::class);
+    $payment = $checkout->create($this->student, 'tuition', $account->id, 2000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $checkout->confirm($this->student, $payment, '0x'.str_repeat('1', 64));
+    $checkout->recordSettlement($payment->fresh());
+    $batch = CollectionBatch::query()->sole();
+    $reviewer = User::factory()->create(['organization_id' => (int) config('eduflow.institution_id')])->assignRole(Role::findOrCreate('admin', 'web'));
+    app(ReviewCollectionBatch::class)->handle($reviewer, $batch, $batch->snapshot_digest,
+        'approve_receipts', 'Independent evidence check', 'Receipt and restrictions independently checked.');
+    $steps = app(StudentPaymentProgress::class)->forPayment($payment->fresh());
+    $review = collect($steps)->firstWhere('stage', 'receipt_review');
+    $planning = collect($steps)->firstWhere('stage', 'planning');
+    expect($review['status'])->toBe('completed')->and($planning['status'])->toBe('waiting')
+        ->and($planning['message'])->toContain('No approved receipt-to-budget route')
+        ->and(PaymentAuthorization::query()->count())->toBe(0);
+});
+
+test('scheduled receipt recovery dispatches committed payments without running them inline', function (): void {
+    controlledWallet($this->student, $this->address);
+    $this->student->forceFill(['organization_id' => (int) config('eduflow.institution_id')])->save();
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $checkout = app(StudentControlledCheckout::class);
+    $payment = $checkout->create($this->student, 'tuition', $account->id, 2000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $checkout->confirm($this->student, $payment, '0x'.str_repeat('3', 64));
+    $this->travel(181)->seconds();
+    Bus::fake();
+    config(['queue.default' => 'database', 'queue.connections.database.retry_after' => 360]);
+    $this->artisan('app:dispatch-student-receipts')->expectsOutputToContain('Student receipt jobs dispatched: 1')->assertSuccessful();
+    $this->artisan('app:dispatch-student-receipts')->expectsOutputToContain('Student receipt jobs dispatched: 0')->assertSuccessful();
+    Bus::assertDispatchedTimes(ReconcileStudentControlledPayment::class, 1);
+    expect(Transaction::query()->count())->toBe(1)->and($account->fresh()->paid_amount)->toBe(2000000);
+});
+
+test('student payment activity persists through browser refresh without duplicate tuition credit', function (): void {
+    $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
+    controlledWallet($this->student, $this->address);
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $checkout = app(StudentControlledCheckout::class);
+    $payment = $checkout->create($this->student, 'tuition', $account->id, 2000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $checkout->confirm($this->student, $payment, '0x'.str_repeat('5', 64));
+    $checkout->recordSettlement($payment->fresh());
+    $page = visit(route('student.pay', ['account' => $account->id, 'mode' => 'tuition']))
+        ->assertSee('Receipt and policy progress')
+        ->assertSee('Transfer verified and credited.')
+        ->assertSee('Institution receipt recorded.')
+        ->assertSee('Classification not started.')
+        ->assertSee('Classification does not authorize a transfer.')
+        ->assertNoJavaScriptErrors();
+    $page->refresh()->assertSee('Receipt and policy progress')->assertSee('Institution receipt recorded.')->assertNoJavaScriptErrors();
+    expect($account->fresh()->paid_amount)->toBe(2000000)
+        ->and(Transaction::query()->count())->toBe(1)
+        ->and(PaymentAuthorization::query()->count())->toBe(0);
+})->group('browser');
+
+test('student payment timeline stays readable on mobile with finance review hold', function (): void {
+    $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
+    controlledWallet($this->student, $this->address);
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $checkout = app(StudentControlledCheckout::class);
+    $payment = $checkout->create($this->student, 'tuition', $account->id, 2000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $checkout->confirm($this->student, $payment, '0x'.str_repeat('8', 64));
+    $checkout->recordSettlement($payment->fresh());
+    $page = visit(route('student.pay', ['account' => $account->id, 'mode' => 'tuition']))->on()->mobile()
+        ->assertSee('Receipt and policy progress')
+        ->assertSee('Waiting for independent finance receipt review.')
+        ->assertSee('No automated disbursement is authorized by this payment.')
+        ->assertNoJavaScriptErrors();
+    expect($page->script('document.documentElement.scrollWidth <= window.innerWidth'))->toBeTrue()
+        ->and(PaymentAuthorization::query()->count())->toBe(0);
+})->group('browser');
+
+test('successful tuition confirmation records admin transaction with stopped workers and no intake owner', function (): void {
+    controlledWallet($this->student, $this->address);
+    config(['queue.default' => 'sync', 'eduflow.student_tuition.intake_owner_id' => null]);
+    $account = TuitionAccount::factory()->create(['student_id' => $this->student->id, 'total_amount' => 10000000, 'paid_amount' => 0]);
+    $checkout = app(StudentControlledCheckout::class);
+    $payment = $checkout->create($this->student, 'tuition', $account->id, 2000000);
+    $this->transaction = controlledTransfer($payment);
+    $this->receipt = controlledReceipt($payment);
+    $hash = '0x'.str_repeat('9', 64);
+    $checkout->confirm($this->student, $payment, $hash);
+    expect(Transaction::query()->where('provider_tx_hash', $hash)->count())->toBe(1)
+        ->and($account->fresh()->paid_amount)->toBe(2000000)
+        ->and(CollectionBatch::query()->count())->toBe(0);
+    $checkout->confirm($this->student, $payment->fresh(), $hash);
+    expect(Transaction::query()->where('provider_tx_hash', $hash)->count())->toBe(1);
 });
