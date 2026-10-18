@@ -37,7 +37,7 @@ test('financial assistance page renders policy and history for students', functi
     );
 });
 
-test('request within the automatic limit is auto-approved and paid out', function (): void {
+test('request within policy limit awaits authorization without simulated payout', function (): void {
     $organization = Organization::factory()->create([
         'minimum_reserve' => 10000.00,
         'max_auto_payment' => 1000.00,
@@ -77,17 +77,14 @@ test('request within the automatic limit is auto-approved and paid out', functio
 
     expect($request)->not->toBeNull();
     expect((float) $request->approved_amount)->toBe(80.0);
-    expect($request->status)->toBe('paid');
+    expect($request->status)->toBe('escalated');
 
     $transaction = Transaction::query()
         ->where('reference_type', 'student_assistance_request')
         ->where('reference_id', $request->id)
         ->first();
 
-    expect($transaction)->not->toBeNull();
-    expect($transaction->status->value)->toBe('confirmed');
-    expect((float) $transaction->amount)->toBe(80.0);
-    expect($transaction->provider_tx_hash)->toStartWith('0x');
+    expect($transaction)->toBeNull();
 
     $decision = DB::table('agent_decisions')
         ->where('reference_type', 'student_assistance_request')
@@ -156,7 +153,7 @@ test('request above the automatic limit is partially approved and escalated', fu
         ->where('reference_id', $request->id)
         ->sum('amount');
 
-    expect((float) $paid)->toBe(100.0);
+    expect((float) $paid)->toBe(0.0);
 });
 
 test('submission without a linked wallet is rejected', function (): void {

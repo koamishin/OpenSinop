@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Policies;
 
 use App\Models\AssistanceRequest;
+use App\Models\Organization;
 use App\Models\User;
+use App\Services\InstallationInstitution;
 
 class AssistanceRequestPolicy
 {
@@ -17,7 +19,12 @@ class AssistanceRequestPolicy
     public function view(User $user, AssistanceRequest $assistanceRequest): bool
     {
         if ($this->viewAny($user)) {
-            return true;
+            $institution = app(InstallationInstitution::class)->current($user);
+            $student = $assistanceRequest->student;
+            $ownerId = ($student === null ? null : $student->organization_id) ?? $assistanceRequest->user->organization_id;
+
+            return $institution !== null && ($ownerId === $institution->id
+                || ($ownerId === null && $user->organization_id === null && Organization::query()->count() === 1));
         }
 
         return $user->hasRole('student') && (

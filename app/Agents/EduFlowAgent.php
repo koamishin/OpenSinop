@@ -187,10 +187,11 @@ class EduFlowAgent
         $fund = AssistanceFund::where('organization_id', $org->id)->first();
         $policy = AssistancePolicyVersion::active($org->id);
 
-        $pendingAid = AssistanceRequest::whereIn('status', [
-            AssistanceStatus::SUBMITTED->value,
-            AssistanceStatus::PENDING->value,
-        ])->with(['student.tuitionAccounts', 'user'])->get();
+        $pendingAid = AssistanceRequest::query()->whereHas('student', fn ($query) => $query->where('organization_id', $org->id))
+            ->whereIn('status', [
+                AssistanceStatus::SUBMITTED->value,
+                AssistanceStatus::PENDING->value,
+            ])->with(['student.tuitionAccounts', 'user'])->get();
 
         $this->reportProgress($onProgress, 'observe', 'Pending assistance observed',
             "Found {$pendingAid->count()} pending assistance requests for policy evaluation.");
@@ -262,7 +263,7 @@ class EduFlowAgent
             $recipient = $aidRequest->student?->payout_address;
 
             if (in_array($aidResult->decision, [AgentDecisionType::AUTO_APPROVE, AgentDecisionType::PARTIAL_APPROVAL], true)
-                && ($recipient === null || $aidRequest->student?->hasValidPayoutAddress() !== true)) {
+                && ($recipient === null || $aidRequest->student->hasValidPayoutAddress() !== true)) {
                 $decision->update([
                     'status' => 'escalated',
                     'decision' => AgentDecisionType::ESCALATE,
@@ -331,9 +332,9 @@ class EduFlowAgent
                     $decision->update(['status' => 'requires_authorized_workflow']);
 
                     $aidRequest->update([
-                        'status' => AssistanceStatus::RESOLVED,
+                        'status' => AssistanceStatus::IN_PROGRESS,
                         'admin_notes' => "EduFlow AI: {$aidResult->reasoning}. Payment initiation withheld; requires authorized workflow review.",
-                        'resolved_at' => now(),
+                        'resolved_at' => null,
                     ]);
                 }
             } elseif ($aidResult->decision === AgentDecisionType::HOLD) {

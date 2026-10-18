@@ -49,11 +49,17 @@ The dashboard's confidence, concurrence, and timing figures describe recorded
 evaluations and reviews. They do not certify accuracy, savings, or financial safety.
 
 :::caution[Receipt approval is a separate action]
-The Policy evaluations screen also has a receipt approval action. For tuition-linked
-collections, that action can invoke the experimental automatic bridge when enabled.
-Reading advice is not the same as clicking approval. See
-[Current limits](../../institution/safety-readiness/#experimental-automatic-bridge).
+Receipt approval requires the actual independent reviewer. It queues fresh classification;
+it cannot borrow another staff identity or authorize spending. JEV provider rate limits
+produce `needs_review`, not local keyword matching labeled as model confidence.
 :::
+
+## Assistance commentary
+
+Assistance eligibility is computed before any model call. Commentary is queued after
+commit and recovered by `app:dispatch-assistance-advice`. The worker checks institution
+ownership, provider consent and decision evidence, then stores sanitized text under
+`metadata.advisory`. It cannot change approved amounts, status, policy or recipient.
 
 ## If advice is unavailable
 

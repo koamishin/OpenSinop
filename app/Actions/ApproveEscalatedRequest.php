@@ -4,25 +4,18 @@ declare(strict_types=1);
 
 namespace App\Actions;
 
-use App\Enums\AssistanceCategory;
 use App\Enums\AssistanceStatus;
-use App\Enums\TransactionType;
 use App\Models\AgentDecision;
 use App\Models\Approval;
 use App\Models\AssistanceFund;
 use App\Models\AssistanceRequest;
 use App\Models\User;
-use App\Services\CircleWalletService;
-use App\Services\TuitionSettlementService;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 class ApproveEscalatedRequest
 {
-    public function __construct(
-        private readonly CircleWalletService $walletService,
-        private readonly TuitionSettlementService $tuitionService,
-    ) {}
-
     public function handle(
         AssistanceRequest $request,
         AgentDecision $decision,
@@ -31,108 +24,45 @@ class ApproveEscalatedRequest
         ?string $comment = null,
         bool $forceTuitionOffset = false,
     ): Approval {
-        $requestedBase = (int) ($request->requested_amount ?? 0);
-        $approvedBase = isset($decision->input_snapshot['approved_base_units'])
-            ? (int) $decision->input_snapshot['approved_base_units']
-            : (int) round((float) $decision->approved_amount * 1_000_000);
-
-        $remainingBase = max(0, $requestedBase - $approvedBase);
-
-        if ($remainingBase <= 0) {
-            throw new InvalidArgumentException('No escalated remainder to approve.');
+        if (! $approver->hasVerifiedEmail() || ! $approver->hasAnyRole(['admin', 'super_admin', 'finance_officer'])
+            || $approver->organization_id !== $fund->organization_id
+            || $request->student?->organization_id !== $fund->organization_id
+            || $request->student->user_id === $approver->id
+            || $decision->organization_id !== $fund->organization_id
+            || $decision->reference_type !== AssistanceRequest::class || $decision->reference_id !== $request->id) {
+            throw new AuthorizationException('Independent institution finance review required.');
+        }
+        if ($forceTuitionOffset) {
+            throw new InvalidArgumentException('Internal tuition credit requires a separate exact authorized credit workflow. No payment or tuition credit recorded.');
         }
 
-        $org = $fund->organization;
-        $wallet = $org->primaryWallet();
+        return DB::transaction(function () use ($request, $decision, $approver, $fund, $comment): Approval {
+            $stored = AssistanceRequest::query()->whereKey($request->id)->lockForUpdate()->firstOrFail();
+            $decision = AgentDecision::query()->whereKey($decision->id)->lockForUpdate()->firstOrFail();
+            if ($decision->organization_id !== $fund->organization_id || $decision->reference_type !== AssistanceRequest::class
+                || $decision->reference_id !== $stored->id || $stored->student?->organization_id !== $fund->organization_id) {
+                throw new AuthorizationException('Assistance ownership changed before review.');
+            }
+            $existing = Approval::query()->where('agent_decision_id', $decision->id)->first();
+            if ($existing !== null && $existing->status === 'approved') {
+                if ($existing->approver_id !== $approver->id) {
+                    throw new AuthorizationException('Review belongs to another officer.');
+                }
 
-        if (! $wallet) {
-            throw new InvalidArgumentException('Primary wallet missing.');
-        }
+                return $existing;
+            }
+            if ($decision->status !== 'escalated' || ! $decision->requires_approval) {
+                throw new InvalidArgumentException('No escalated decision awaits review.');
+            }
+            $approval = Approval::updateOrCreate(['agent_decision_id' => $decision->id], [
+                'organization_id' => $fund->organization_id, 'approver_id' => $approver->id,
+                'status' => 'approved', 'comment' => $comment ?? 'Eligibility reviewed; payment authorization remains required.', 'approved_at' => now(),
+            ]);
+            $decision->update(['status' => 'requires_authorized_workflow']);
+            $stored->update(['status' => AssistanceStatus::IN_PROGRESS, 'resolved_at' => null,
+                'admin_notes' => 'Finance eligibility review recorded. No funds disbursed or tuition credit applied. Separate payment authorization and verified settlement required.']);
 
-        $remainingFloat = round($remainingBase / 1_000_000, 2);
-
-        $student = $request->student;
-        $hasPayoutAddress = $student?->hasValidPayoutAddress() === true;
-        $tuitionAccount = $student?->tuitionAccounts()->first();
-        $hasTuitionBalance = $tuitionAccount && $tuitionAccount->remainingAmount() > 0;
-
-        $settleViaTuition = ($forceTuitionOffset || (! $hasPayoutAddress && $request->category === AssistanceCategory::FINANCIAL))
-            && $hasTuitionBalance;
-
-        if (! $hasPayoutAddress && ! $settleViaTuition) {
-            throw new InvalidArgumentException('Student does not have a valid payout address on file. Cannot disburse funds.');
-        }
-
-        if ($settleViaTuition) {
-            $quote = $decision->input_snapshot['locked_quote'] ?? [];
-            $tx = $this->tuitionService->settleToTuition(
-                request: $request,
-                account: $tuitionAccount,
-                usdcBaseUnits: $remainingBase,
-                treasury: $wallet,
-                quote: $quote,
-            );
-
-            $noteMessage = "Escalated {$remainingFloat} USDC applied to tuition ledger (#{$tuitionAccount->id}) by {$approver->name}.";
-        } else {
-            $recipient = $this->resolveRecipient($request);
-            $tx = $this->walletService->executePaymentBaseUnits(
-                wallet: $wallet,
-                recipientAddress: $recipient,
-                baseUnits: $remainingBase,
-                type: TransactionType::STUDENT_ASSISTANCE,
-                referenceType: AssistanceRequest::class,
-                referenceId: $request->id,
-                metadata: [
-                    'ticket' => $request->ticket_number,
-                    'approved_by' => $approver->name,
-                    'human_override' => true,
-                    'escalated_remainder_base_units' => $remainingBase,
-                ],
-            );
-
-            $noteMessage = "Escalated {$remainingFloat} USDC approved by {$approver->name}. Tx: {$tx->provider_tx_hash}";
-        }
-
-        $fund->recordDisbursement($remainingBase);
-
-        $approval = Approval::updateOrCreate(
-            ['agent_decision_id' => $decision->id],
-            [
-                'organization_id' => $fund->organization_id,
-                'approver_id' => $approver->id,
-                'status' => 'approved',
-                'comment' => $comment ?? 'Escalated remainder approved.',
-                'approved_at' => now(),
-            ]
-        );
-
-        $decision->update([
-            'status' => 'executed',
-            'approved_amount' => round($requestedBase / 1_000_000, 2),
-            'input_snapshot' => array_merge($decision->input_snapshot ?? [], [
-                'approved_base_units' => $requestedBase,
-            ]),
-        ]);
-
-        $request->update([
-            'status' => AssistanceStatus::RESOLVED->value,
-            'admin_notes' => trim(($request->admin_notes ?? '')."\n".$noteMessage),
-            'resolved_at' => now(),
-        ]);
-
-        return $approval;
-    }
-
-    private function resolveRecipient(AssistanceRequest $request): string
-    {
-        $student = $request->student;
-        $address = $student?->payout_address;
-
-        if (! is_string($address) || ! $student->hasValidPayoutAddress()) {
-            throw new InvalidArgumentException('Student does not have a valid payout address on file. Cannot disburse funds.');
-        }
-
-        return $address;
+            return $approval;
+        });
     }
 }

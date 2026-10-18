@@ -25,6 +25,7 @@ use App\Models\Wallet;
 use App\Services\CircleWalletService;
 use Illuminate\Support\Facades\Http;
 use Mockery\MockInterface;
+use Spatie\Permission\Models\Role;
 use Yukazakiri\Lepton\Contracts\ArcNetworkGateway;
 use Yukazakiri\Lepton\Contracts\WalletGateway;
 use Yukazakiri\Lepton\Gateways\FakeLeptonGateway;
@@ -161,6 +162,7 @@ test('autonomous cycle proposes but never initiates payment, and still escalates
         'is_active' => true,
     ]);
 
+    $eligibleStudent->forceFill(['organization_id' => $this->org->id])->save();
     $aid = AssistanceRequest::factory()->create([
         'student_id' => $eligibleStudent->id,
         'user_id' => $eligibleStudent->user_id,
@@ -234,7 +236,7 @@ test('autonomous cycle proposes but never initiates payment, and still escalates
         ->and($events[7])->toMatchArray(['reference' => $inv2->reference, 'status' => 'escalated'])
         ->and($events[9])->toMatchArray(['reference' => $inv3->reference, 'status' => 'held'])
         ->and($events[12]['summary'])->toBe('enrolled: passed; academic_qualified: passed; attendance_ok: passed; has_outstanding_tuition: passed; within_semester_cap: passed; fund_affordable: passed; reserve_protected: passed; within_daily_budget: passed; within_auto_limit: passed.')
-        ->and($events[15])->toMatchArray(['reference' => $aid->ticket_number, 'status' => 'resolved', 'phase' => 'outcome'])
+        ->and($events[15])->toMatchArray(['reference' => $aid->ticket_number, 'status' => 'in_progress', 'phase' => 'outcome'])
         ->and($events[15]['summary'])->toContain('decision status: requires_authorized_workflow');
 
     // Stats: nothing auto-paid, two proposals withheld for the authorized
@@ -262,7 +264,7 @@ test('autonomous cycle proposes but never initiates payment, and still escalates
     // The request is closed as decided, but the note says plainly that no
     // money moved, and no disbursement is claimed.
     $updatedAid = $aid->fresh();
-    expect($updatedAid->status)->toBe(AssistanceStatus::RESOLVED)
+    expect($updatedAid->status)->toBe(AssistanceStatus::IN_PROGRESS)
         ->and($updatedAid->admin_notes)->toContain('Payment initiation withheld')
         ->and($updatedAid->admin_notes)->not->toContain('Disbursed', 'on Arc');
 
@@ -361,6 +363,7 @@ test('progress records assistance setup escalation without attempting a transfer
     }
 
     $student = Student::factory()->create();
+    $student->forceFill(['organization_id' => $org->id])->save();
     $aid = AssistanceRequest::factory()->create([
         'student_id' => $student->id,
         'user_id' => $student->user_id,
@@ -544,6 +547,7 @@ test('autonomous cycle splits 150 USDC aid into 100 auto plus 50 escalated', fun
         'is_active' => true,
     ]);
 
+    $student->forceFill(['organization_id' => $this->org->id])->save();
     $aid = AssistanceRequest::factory()->create([
         'student_id' => $student->id,
         'user_id' => $student->user_id,
@@ -597,13 +601,13 @@ test('autonomous cycle splits 150 USDC aid into 100 auto plus 50 escalated', fun
     $approval = Approval::where('agent_decision_id', $decision->id)->first();
     expect($approval)->not->toBeNull()->and($approval->status)->toBe('pending');
 
-    $officer = User::factory()->create(['name' => 'Finance Officer']);
+    $officer = User::factory()->create(['name' => 'Finance Officer', 'organization_id' => $this->org->id])->assignRole(Role::findOrCreate('finance_officer', 'web'));
     app(ApproveEscalatedRequest::class)->handle($aid, $decision, $officer, $fund, 'Remainder approved.');
 
     // Only the escalated remainder moves, and only because a human approved
     // it. The 100 USDC the policy engine proposed was never paid by the agent.
-    expect($aid->fresh()->status instanceof AssistanceStatus ? $aid->fresh()->status->value : $aid->fresh()->status)->toBe(AssistanceStatus::RESOLVED->value)
-        ->and($this->wallet->fresh()->balance)->toBe(25370.00)
+    expect($aid->fresh()->status instanceof AssistanceStatus ? $aid->fresh()->status->value : $aid->fresh()->status)->toBe(AssistanceStatus::IN_PROGRESS->value)
+        ->and($this->wallet->fresh()->balance)->toBe(25420.00)
         ->and($approval->fresh()->status)->toBe('approved');
 });
 
@@ -648,6 +652,7 @@ test('a student with no payout address is escalated, never paid a fabricated add
         'is_active' => true,
     ]);
 
+    $student->forceFill(['organization_id' => $this->org->id])->save();
     $aid = AssistanceRequest::factory()->create([
         'student_id' => $student->id,
         'user_id' => $student->user_id,
@@ -755,6 +760,7 @@ test('finance officer can approve student assistance escalation via agent', func
         'is_active' => true,
     ]);
 
+    $student->forceFill(['organization_id' => $this->org->id])->save();
     $aid = AssistanceRequest::factory()->create([
         'student_id' => $student->id,
         'user_id' => $student->user_id,
@@ -768,15 +774,15 @@ test('finance officer can approve student assistance escalation via agent', func
     $approval = Approval::where('agent_decision_id', $decision->id)->first();
     expect($approval)->not->toBeNull();
 
-    $officer = User::factory()->create(['name' => 'Finance Director']);
+    $officer = User::factory()->create(['name' => 'Finance Director', 'organization_id' => $this->org->id])->assignRole(Role::findOrCreate('finance_officer', 'web'));
     $success = $this->agent->approveEscalation($approval, $officer, 'Approved remaining 50 USDC');
 
     expect($success)->toBeTrue()
-        ->and($aid->fresh()->status instanceof AssistanceStatus ? $aid->fresh()->status->value : $aid->fresh()->status)->toBe(AssistanceStatus::RESOLVED->value)
+        ->and($aid->fresh()->status instanceof AssistanceStatus ? $aid->fresh()->status->value : $aid->fresh()->status)->toBe(AssistanceStatus::IN_PROGRESS->value)
         ->and($approval->fresh()->status)->toBe('approved')
         // Only the human-approved amount moves; nothing the agent proposed was
         // paid before the officer acted.
-        ->and($this->wallet->fresh()->balance)->toBe(25370.00);
+        ->and($this->wallet->fresh()->balance)->toBe(25420.00);
 });
 
 test('finance officer can reject student assistance escalation via agent', function (): void {
@@ -813,6 +819,7 @@ test('finance officer can reject student assistance escalation via agent', funct
         'is_active' => true,
     ]);
 
+    $student->forceFill(['organization_id' => $this->org->id])->save();
     $aid = AssistanceRequest::factory()->create([
         'student_id' => $student->id,
         'user_id' => $student->user_id,
@@ -826,7 +833,7 @@ test('finance officer can reject student assistance escalation via agent', funct
     $approval = Approval::where('agent_decision_id', $decision->id)->first();
     expect($approval)->not->toBeNull();
 
-    $officer = User::factory()->create(['name' => 'Finance Director']);
+    $officer = User::factory()->create(['name' => 'Finance Director', 'organization_id' => $this->org->id])->assignRole(Role::findOrCreate('finance_officer', 'web'));
     $success = $this->agent->rejectEscalation($approval, $officer, 'Budget allocation exhausted for this category');
 
     expect($success)->toBeTrue()

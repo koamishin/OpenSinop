@@ -69,3 +69,6 @@ Schedule::command('eduflow:autonomous-pipeline-bridge --latest')->everyFiveMinut
 // Recover committed student receipts after a missed wake. No signer or financial approval.
 Schedule::command('app:dispatch-student-receipts')->everyFiveMinutes()->withoutOverlapping(5)->onOneServer()
     ->when(fn (): bool => (bool) config('eduflow.background_finance.enabled', false));
+
+// Optional assistance commentary, never financial authority.
+Schedule::command('app:dispatch-assistance-advice')->everyFiveMinutes()->withoutOverlapping(5)->onOneServer();

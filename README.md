@@ -459,7 +459,17 @@ The developer demo (`EduFlowFinancialSeeder`, `EducationDemoSeeder`, `EduFlowPla
 
 In addition, the demo evaluates one emergency student assistance request for **15 USDC** against a **10 USDC** auto-limit (`BOUNDED_EMERGENCY_AID_V1`), resulting in a bounded split: **10 USDC** approved immediately and **5 USDC** escalated for staff review.
 
-Only the two auto-approved invoices and the approved aid portion move funds: **85 USDC** (`(30 + 45 + the 10 USDC aid` portion). Under `LEPTON_DRIVER=circle`, `app:demo` is **not a simulation** and spends 85 USDC of testnet funds; under `LEPTON_DRIVER=fake`, everything runs in memory and badges receipts as **Simulated** so you can never mistake a fake run for real settlement.
+These are policy-evaluation scenarios, not proof of payment. Assistance eligibility and
+finance eligibility review do not send funds, deduct fund balances or resolve unpaid
+requests. Legacy simulated assistance payouts are disabled. Actual transfers require a
+separately authorized workflow and matching Arc settlement proof; the assistance-specific
+durable payout path is still pending. Do not treat an old demo's 85 USDC total as current
+execution behavior.
+
+Optional assistance commentary is queued after the deterministic decision is recorded.
+Run `php artisan app:dispatch-assistance-advice` for missed-dispatch recovery. A durable
+queue and explicit advisory/provider-disclosure settings are required. Commentary never
+changes authoritative amounts, recipient or payment status.
 
 ---
 

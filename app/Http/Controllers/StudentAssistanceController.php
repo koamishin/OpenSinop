@@ -11,7 +11,7 @@ use App\Models\Student;
 use App\Models\StudentAssistanceRequest;
 use App\Models\User;
 use App\Services\AssistanceAgent;
-use App\Services\PaymentService;
+use App\Services\InstallationInstitution;
 use App\Services\PolicyEngineService;
 use App\Services\StudentWalletService;
 use Illuminate\Http\RedirectResponse;
@@ -24,12 +24,12 @@ class StudentAssistanceController extends Controller
 {
     private const PER_PAGE = 10;
 
-    public function index(Request $request): Response
+    public function index(Request $request, InstallationInstitution $institutions): Response
     {
         $user = $request->user();
-        $organization = Organization::query()->first();
+        $organization = $institutions->current($user);
 
-        $requests = $user->studentAssistanceRequests()
+        $requests = $user->studentAssistanceRequests()->where('organization_id', $organization?->id)
             ->latest()
             ->paginate(self::PER_PAGE)
             ->withQueryString()
@@ -45,7 +45,7 @@ class StudentAssistanceController extends Controller
         ]);
     }
 
-    public function store(Request $request, AssistanceAgent $agent, PaymentService $payments): RedirectResponse
+    public function store(Request $request, AssistanceAgent $agent, InstallationInstitution $institutions): RedirectResponse
     {
         $user = $request->user();
 
@@ -62,7 +62,7 @@ class StudentAssistanceController extends Controller
                 ->withInput();
         }
 
-        $organization = Organization::query()->first();
+        $organization = $institutions->require($user);
 
         $assistanceRequest = StudentAssistanceRequest::create([
             'user_id' => $user->id,
@@ -80,15 +80,11 @@ class StudentAssistanceController extends Controller
         $assistanceRequest->update([
             'approved_amount' => $evaluation['approved_amount'],
             'status' => match ($evaluation['decision']) {
-                'auto_approve' => AssistanceDecisionStatus::PAID->value,
+                'auto_approve' => AssistanceDecisionStatus::ESCALATED->value,
                 'partial_approval' => AssistanceDecisionStatus::ESCALATED->value,
                 default => AssistanceDecisionStatus::ESCALATED->value,
             },
         ]);
-
-        if ($evaluation['approved_amount'] > 0.0) {
-            $payments->disburse($assistanceRequest, $user, $organization, $evaluation['approved_amount']);
-        }
 
         return to_route('financial-assistance.index')
             ->with('highlight_request_id', $assistanceRequest->id);

@@ -6,6 +6,32 @@
 
 ## Where Things Stand — Start Here in a New Session
 
+### Current reconciliation — assistance safety and finance orchestration
+
+This block supersedes conflicting delivery claims in older dated notes and the legacy assistance demo below. Historical acceptance reports are retained as history, not current certification.
+
+**Assistance now records eligibility, not payment.** `/assistance` keeps exact, idempotent request intake. The older `/financial-assistance` UI remains a compatibility intake/evaluation surface; it no longer calls the simulated payout executor or marks a new request `paid`. Its two-decimal proposal fields are not authoritative payment amounts. The main agent leaves eligible unpaid requests `in_progress` with `requires_authorized_workflow`, not `resolved`. Finance's escalated action records an independently institution-scoped eligibility review only: it neither calls a signer, deducts a fund/wallet, applies tuition credit nor increases the policy-proposed amount. Internal credit and chain payout are distinct workflows. The retired `PaymentService` refuses synthetic settlement. Existing historical `paid`, `executed`, synthetic hashes and approvals are not rewritten or certified by this change.
+
+**Institution safety:** assistance cycles select institution-owned students; staff detail authorization and resource queries restrict institution ownership. Unowned legacy records remain available only in unambiguous single-institution compatibility contexts. This is not shared-database release certification; remaining routes, rejection actions, audit/export and concurrent changes require a full tenant-boundary audit.
+
+**Current inbound orchestration:** verified student-controlled tuition confirmation attempts the existing treasury-scoped admin transaction projection locally before returning; receipt/provider work stays queued. `ReconcileStudentControlledPayment`, leased `StudentReceiptDispatcher` and scheduled `app:dispatch-student-receipts` recover committed inbound work without resending funds. Reconciliation requires configured, verified institution finance intake owner; background classification requires an explicitly configured existing institution admin requester and active publication. Missing configuration is not repaired with generated staff, roles, approvals or MFA. No incoming payment authorizes outgoing spending.
+
+**JEV:** actual provider classification stays behind operator disclosure and advisory switches. Provider failure is a hold, not keyword matching reported as model confidence. TypeSafe rate limits have been observed in development; quota restoration and fresh evaluations are operator work. Old keyword-generated classifications and synthetic reviews require independent audit and forward correction, never silent rewriting.
+
+**Student progress:** persisted payment/receipt/classification/review/planning facts are visible and polled. Browser checks remain unverified because installed Playwright lacks Chromium; server tests do not substitute for browser acceptance. Admin visibility is not proof of institutional revenue or official local-currency tuition clearance.
+
+#### Remaining delivery order
+
+1. Complete institution-boundary and historical-record audits; remove remaining legacy false payment/credit claims. Consolidate compatibility assistance intake into one exact request lifecycle with explicit migration, rather than fabricating links between old tables.
+2. Build assistance-specific immutable authorization, durable outbox/attempts, stable no-resend recovery, and matching settlement proof. Existing vendor outbox is not automatically authority for student aid. Eligibility review alone never pays. Implement internal tuition credit separately with exact amounts and its own authorization.
+3. Assistance advisory is now queued after the decision commit. `AssessAssistanceDecision` claims persisted queued metadata once; `app:dispatch-assistance-advice` recovers missed wakes on durable queues. Provider failure or stale decision evidence records `needs_review`; commentary never changes financial fields. Recovery parks interrupted running commentary after five minutes without recontacting a provider; changed request evidence is discarded. Operator configuration, PostgreSQL concurrency, browser acceptance and broader tenant audit still remain.
+4. Validate student-controlled immutable consent/settlement in reviewed planning receipts; current `ReviewedCollections` still requires the operator tuition-attempt model. Finish source-linked campus-bill reconciliation without synthesized operator consent. Until then, admin receipt visibility does not imply planning eligibility.
+5. Finish normal operator source/destination/budget/funding/reservation UI and prove genuine independent human-approved Arc-testnet outflow with unknown-attempt recovery. Preserve unresolved attempts; do not resend to manufacture demo success.
+6. Add bounded institution service authority for approved mandates only after human execution acceptance. `AutonomousPipelineBridge` is read-only and cannot generate staff/MFA, accept plans or authorize/disburse. Mandate records/scanner are not unattended payment execution.
+7. Rehearse browser, PostgreSQL concurrency, backup/restore, upgrades, private storage and audit export. Mainnet, executable FX/off-ramps and unrestricted shared-school deployment remain separately gated future work, regardless of UI/config options in §20.
+
+**Validation for this assistance correction:** isolated fake-driver assistance/agent/panel/safety suites: 138 tests, 1,224 assertions passed. This establishes no live payout, browser or production readiness. Do not promote these counts to whole-suite or CI claims.
+
 **Automatic tuition intake (2026-10-13):** a settled movement can now be reconciled into
 Collections without a staff click, behind `EDUFLOW_TUITION_AUTO_INTAKE` (off by default).
 Unattended intake is stricter than the staff button: it refuses the legacy
@@ -475,6 +501,9 @@ graph TD
 ### Part 2: Deterministic Policy Engine & Multi-Currency Conversion (COMPLETED)
 
 #### Objectives
+
+**Current correction:** approval amounts below are eligibility proposals. Neither the policy limit nor finance eligibility review constitutes disbursement authorization; see current reconciliation above.
+
 1. **Currency Conversion & Exchange Rate Layer:**
    - `CurrencyRate` model and repository storing live and fallback exchange rates against USDC.
    - `CurrencyConverter` service converting between USDC base units and any supported fiat/crypto currency using integer scaling.
@@ -499,7 +528,7 @@ graph TD
 5. **Agent Decisions & Dual-Currency Audit Logs:**
    - `AgentDecision` capturing exact evaluation rules, pass/fail checks, locked exchange rates, and split amounts.
 6. **Filament Staff Actions:**
-   - Staff review and one-click approve/reject actions for the escalated human-review portion in the Finance Panel.
+   - Staff eligibility review/reject actions in the Finance Panel. These do not submit funds or settle tuition.
 
 #### Planned Files
 - `app/Enums/CurrencyCode.php`
@@ -550,10 +579,10 @@ proposals. Keys are never rendered back into the edit form.
 
 The advisory gate is wired in. `EvaluateAssistancePolicy::recordDecision()` writes the
 authoritative decision row first, then attaches commentary under a namespaced `advisory`
-key. The existing implementation calls `AdvisoryGate::assessHardship()` synchronously;
-that gate calls `prompt()`. Failure can leave the deterministic verdict intact, but a
-slow provider can still delay the caller. Moving advisory work to a durable queue after
-commit is an OSS release gate, not an already-satisfied invariant. Prior live gateway
+key. The action now records queued assistance-advice metadata and dispatches after commit.
+`AssessAssistanceDecision` calls the provider in a worker and writes namespaced commentary
+only; recovery dispatch sweeps committed queued rows. Provider calls no longer delay the
+policy action. A claimed interrupted job remains review work rather than being blindly replayed. Prior live gateway
 checks are development observations, not reproducible release evidence.
 
 Verified live against an OpenAI-compatible gateway proxy, which shaped two design decisions. It ignores
@@ -807,7 +836,7 @@ C0 preview and C1 drafts/policy activation alone cannot execute this target.
   7. Record staff usage with permission and report approve-as-is/edit/reject/hold counts,
      automatic-versus-escalated decisions and review time against a recorded baseline.
 
-**Legacy assistance developer demo (retained; not current college pilot):** Amounts below
+**Legacy assistance developer demo (historical target, not current executable behavior):** Amounts below
 are illustrative policy examples, not installation defaults. Read the active policy and
 current fixtures for the actual split. Fake and testnet runs must be labelled separately;
 neither proves mainnet or local-bank readiness.
@@ -3775,7 +3804,7 @@ The AI gateway is fully configurable for any OpenAI-compatible API endpoint (e.g
 ### 19.5 Background Agent Execution & Queue Scheduling
 
 To ensure autonomous execution without synchronous browser wait times:
-1. **Queued Evaluation Job:** `App\Jobs\EvaluateInstitutionPolicy` executes policy evaluations asynchronously with exponential retry backoff.
+1. **Queued Evaluation Job:** `App\Jobs\EvaluateInstitutionPolicy` executes advisory evaluations asynchronously with one attempt (`tries = 1`); unavailable or changed evidence concludes `needs_review`. Request a fresh run after restoring service; do not describe this as exponential provider retry.
 2. **Background Dispatch Command:** `App\Console\Commands\DispatchPolicyEvaluations` (`app:dispatch-policy-evaluations`) sweeps queued evaluations and dispatches jobs onto the queue worker.
 3. **Scheduler Integration:** `routes/console.php` schedules:
    - `app:dispatch-policy-evaluations`: Runs every minute (`->everyMinute()`) to process incoming policy requests.
@@ -3784,6 +3813,8 @@ To ensure autonomous execution without synchronous browser wait times:
 ---
 
 ## 20. Multi-Institution Shared-Database Architecture, Student Web3 Wallets & Arc Mainnet
+
+**Delivery qualification:** this section describes direction and partial configuration/onboarding surfaces, not certified multi-tenant or mainnet payment operation. Current acceptance remains testnet-bound and requires object-level isolation and genuine authorized settlement proof. Where it conflicts with §14 safety gates, those gates prevail.
 
 ### 20.1 Overview & Motivation
 Institutions need a frictionless way to self-host or join a shared-database instance hosting multiple schools simultaneously without cross-tenant interference. Students simultaneously need sovereign Web3 wallet registration on Arc (supporting both Arc Mainnet and Testnet) to receive stipends, grants, and verify tuition payment claims without requiring manual operator intervention.

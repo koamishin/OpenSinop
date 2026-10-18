@@ -20,53 +20,22 @@ that a school can operate the full system safely.
 | Policy advice | Policy revisions, examples, publication, evaluations, analytics | Advice and confidence scores are not spend authority or assurance of correctness. |
 | Recurring mandates | Preparation, review, occurrence checks and supervision | A recorded release disposition is not itself proof of payment submission. |
 
-## Experimental automatic bridge
+## Read-only bridge and assistance boundaries
 
-This is separate from the ordinary reviewed path. It connects an already verified
-student tuition payment to collection review, planning, and a possible vendor payment.
+`AutonomousPipelineBridge` reports the next required review only. It no longer grants
+staff permissions, generates MFA, accepts plans, authorizes payments, or submits funds.
+Both autonomous bridge flags default to `false`; legacy auto-disburse settings do not
+grant execution authority. Existing historical bridge approvals need independent audit.
 
-The configuration currently defaults both of these to `true`:
+Assistance policy output is eligibility advice, not a transfer. The compatibility
+`/financial-assistance` flow no longer creates simulated payouts or marks new requests
+paid. Finance eligibility review leaves requests in progress and changes no wallet,
+fund, or tuition balance. A durable assistance-specific authorization and settlement
+workflow remains unimplemented; vendor payment authority must not be reused implicitly.
 
-```dotenv
-EDUFLOW_AUTONOMOUS_PIPELINE_ENABLED=true
-EDUFLOW_AUTONOMOUS_PIPELINE_AUTO_DISBURSE=true
-```
-
-The default automatic bill ceiling is `50.00` USDC. This ceiling is not a complete
-institutional spending policy or a certification of safety.
-
-### Why a recorded reviewer is not proof of human approval
-
-The bridge can choose staff records, grant reviewer permissions, generate a reviewer
-TOTP from stored authenticator material, and supply a hardcoded demo password to the
-review action. It also turns submission on in the running process. These behaviors must
-not be described as a fresh, independent human payment authorization.
-
-When its verifier reports settlement, the bridge can mirror a transaction and mark the
-invoice `paid`. That testnet state must not be treated as proof that a real supplier
-received the institution's local-currency payment.
-
-### Where it can run
-
-- The scheduler invokes the bridge every five minutes when its enabled flag is true.
-- Reviewing a tuition-linked collection can invoke it.
-- **Auto-Verify & Bridge** invokes it directly.
-- The command `eduflow:autonomous-pipeline-bridge` invokes it directly.
-- Receipt approval from Policy evaluations can invoke it for linked tuition.
-
-The enabled flag gates scheduled and some automatic calls. **It is not checked by
-every direct entry point.** The auto-disburse flag is checked later, after earlier
-review and planning work may already have happened.
-
-### Safest evaluation boundary
-
-Use an isolated instance with simulated data and no live signing credentials. Set both
-bridge flags to `false`, keep submission/student payment runtimes off, and avoid direct
-bridge actions and commands. These settings reduce exposure; they do not create a
-complete authorization boundary where the code has none.
-
-This documentation change does not repair or enable the payment code. Any production
-use needs a separate security and financial review.
+Assistance commentary is optional queued work. Both advisory and provider-disclosure
+switches must be enabled. Missing provider or malformed output concludes a review hold,
+never a fabricated classification or payment. See [Policy advice](../../guides/policy-advice/).
 
 ## Amounts and settlement evidence
 

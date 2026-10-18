@@ -7,7 +7,6 @@ namespace App\Filament\Resources\AssistanceRequests\Actions;
 use App\Actions\ApproveEscalatedRequest;
 use App\Enums\AssistanceStatus;
 use App\Enums\CurrencyCode;
-use App\Filament\Resources\AssistanceRequests\AssistanceRequestResource;
 use App\Models\AgentDecision;
 use App\Models\Approval;
 use App\Models\AssistanceFund;
@@ -23,12 +22,7 @@ use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Auth;
 use Throwable;
 
-/**
- * Dispatches the escalated remainder of a partially approved assistance request.
- *
- * The 100 USDC autonomous portion was already transferred by EduFlowAgent; this
- * action only releases the portion a human has authority over.
- */
+/** Records eligibility review only; never initiates a transfer or tuition credit. */
 class ApproveEscalatedAction extends Action
 {
     protected function setUp(): void
@@ -37,13 +31,13 @@ class ApproveEscalatedAction extends Action
 
         $this
             ->name('approve_escalated')
-            ->label('Approve remainder')
+            ->label('Review eligibility')
             ->icon(Heroicon::OutlinedBanknotes)
             ->color('success')
             ->visible(fn (AssistanceRequest $record): bool => self::isVisibleFor($record))
             ->requiresConfirmation()
             ->modalHeading('Approve escalated assistance remainder')
-            ->modalDescription('This executes a second USDC transfer on Arc for the portion held for human review, then resolves the request.')
+            ->modalDescription('Records finance eligibility review only. No transfer, tuition credit or payment authorization is created.')
             ->schema(fn (AssistanceRequest $record): array => self::schemaFor($record))
             ->action(function (AssistanceRequest $record, array $data): void {
                 $this->process($record, $data);
@@ -88,7 +82,7 @@ class ApproveEscalatedAction extends Action
         ];
 
         if ($autoApproved > 0) {
-            $lines[] = 'Auto-approved already disbursed: '.$converter->formatDual($autoApproved, $currency);
+            $lines[] = 'Policy-proposed portion (not disbursed): '.$converter->formatDual($autoApproved, $currency);
         }
 
         if ($pending > 0) {
@@ -169,7 +163,7 @@ class ApproveEscalatedAction extends Action
 
         Notification::make()
             ->title('Remainder approved')
-            ->body(AssistanceRequestResource::formatUsdc($record->fresh()->requested_amount).' USDC fully disbursed. Request resolved.')
+            ->body('Eligibility reviewed. Separate payment authorization and verified settlement remain required. No funds moved.')
             ->success()
             ->send();
     }
@@ -182,7 +176,7 @@ class ApproveEscalatedAction extends Action
             ->color('danger')
             ->requiresConfirmation()
             ->modalHeading('Reject escalated assistance remainder')
-            ->modalDescription('No further funds move. The request is closed and the auto-approved portion stands.')
+            ->modalDescription('No further funds move. The request is closed and no policy-proposed amount is represented as already paid.')
             ->visible(fn (AssistanceRequest $record): bool => self::isVisibleFor($record))
             ->action(function (AssistanceRequest $record): void {
                 $decision = $record->latestAgentDecision();

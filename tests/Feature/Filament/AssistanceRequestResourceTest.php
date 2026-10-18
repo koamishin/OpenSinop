@@ -29,6 +29,7 @@ use App\Filament\Resources\PaymentSubmissions\PaymentSubmissionResource;
 use App\Filament\Resources\Students\StudentResource;
 use App\Filament\Resources\TuitionAccounts\TuitionAccountResource;
 use App\Models\AssistanceRequest;
+use App\Models\Organization;
 use App\Models\Student;
 use App\Models\TuitionAccount;
 use App\Models\User;
@@ -40,6 +41,7 @@ use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
 beforeEach(function (): void {
+    Organization::factory()->create();
     foreach (['admin', 'finance_officer', 'super_admin', 'student', 'user'] as $role) {
         Role::findOrCreate($role, 'web');
     }

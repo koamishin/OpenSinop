@@ -11,7 +11,9 @@ use App\Filament\Resources\AssistanceRequests\Pages\ListAssistanceRequests;
 use App\Filament\Resources\AssistanceRequests\Pages\ViewAssistanceRequest;
 use App\Models\AgentDecision;
 use App\Models\AssistanceRequest;
+use App\Models\Organization;
 use App\Services\CurrencyConverter;
+use App\Services\InstallationInstitution;
 use BackedEnum;
 use Filament\Actions\ViewAction;
 use Filament\Infolists\Components\RepeatableEntry;
@@ -38,9 +40,27 @@ class AssistanceRequestResource extends Resource
 
     protected static ?int $navigationSort = 3;
 
+    #[\Override]
+    public static function getEloquentQuery(): Builder
+    {
+        $institution = app(InstallationInstitution::class)->current();
+        if ($institution === null) {
+            return parent::getEloquentQuery()->whereRaw('1 = 0');
+        }
+
+        return parent::getEloquentQuery()->with(['student.user', 'academicTerm', 'user', 'agentDecisions'])->where(function (Builder $query) use ($institution): void {
+            $query->whereHas('student', fn (Builder $student) => $student->where('organization_id', $institution->id))
+                ->orWhereHas('user', fn (Builder $user) => $user->where('organization_id', $institution->id));
+            if (Organization::query()->count() === 1) {
+                $query->orWhere(fn (Builder $legacy) => $legacy->whereHas('student', fn (Builder $student) => $student->whereNull('organization_id'))
+                    ->whereHas('user', fn (Builder $user) => $user->whereNull('organization_id')));
+            }
+        });
+    }
+
     public static function getNavigationBadge(): ?string
     {
-        $count = AssistanceRequest::whereIn('status', [
+        $count = static::getEloquentQuery()->whereIn('status', [
             AssistanceStatus::SUBMITTED->value,
             AssistanceStatus::PENDING->value,
         ])->count();
@@ -146,15 +166,6 @@ class AssistanceRequestResource extends Resource
                 ViewAction::make(),
             ])
             ->toolbarActions([]);
-    }
-
-    /**
-     * @return Builder<AssistanceRequest>
-     */
-    #[\Override]
-    public static function getEloquentQuery(): Builder
-    {
-        return parent::getEloquentQuery()->with(['student.user', 'academicTerm', 'user', 'agentDecisions']);
     }
 
     #[\Override]

@@ -4,24 +4,25 @@ declare(strict_types=1);
 
 namespace App\Actions;
 
-use App\Ai\Advisory\AdvisoryEnvelope;
-use App\Ai\Advisory\AdvisoryGate;
 use App\DTOs\Money;
 use App\DTOs\PolicyEvaluationResult;
 use App\Enums\AgentDecisionType;
 use App\Enums\CurrencyCode;
+use App\Jobs\AssessAssistanceDecision;
 use App\Models\AgentDecision;
 use App\Models\AssistanceFund;
 use App\Models\AssistancePolicyVersion;
 use App\Models\AssistanceRequest;
 use App\Services\CurrencyConverter;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
 
 class EvaluateAssistancePolicy
 {
     public function __construct(
         private readonly CurrencyConverter $converter,
-        private readonly AdvisoryGate $advisoryGate,
     ) {}
 
     /**
@@ -34,6 +35,10 @@ class EvaluateAssistancePolicy
         CurrencyCode $displayCurrency = CurrencyCode::PHP,
     ): array {
         $student = $request->student;
+        if (($student?->organization_id !== null && $student->organization_id !== $fund->organization_id)
+            || ($policy->organization_id !== null && $policy->organization_id !== $fund->organization_id)) {
+            throw new AuthorizationException('Assistance policy, fund and student must belong to the same institution.');
+        }
         $requestedBase = (int) ($request->requested_amount ?? 0);
         $autoLimitBase = (int) $policy->auto_limit_base_units;
 
@@ -218,38 +223,20 @@ class EvaluateAssistancePolicy
             'status' => $result->decision === AgentDecisionType::AUTO_APPROVE ? 'pending' : 'escalated',
         ]);
 
-        return $this->attachAdvisory($decision, $request);
-    }
+        $decision->update(['metadata' => [...($decision->metadata ?? []), 'assistance_advice' => ['state' => 'queued']]]);
+        DB::afterCommit(function () use ($decision): void {
+            try {
+                $connection = (string) config('queue.default');
+                if (! in_array(config('queue.connections.'.$connection.'.driver'), ['database', 'redis'], true)
+                    || (int) config('queue.connections.'.$connection.'.retry_after', 0) <= 120) {
+                    return;
+                }
+                Bus::dispatch(new AssessAssistanceDecision($decision->id));
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+        });
 
-    /**
-     * Best-effort model commentary. Never throws, and never runs in the
-     * synchronous settlement path unless explicitly enabled: AdvisoryGate
-     * returns null whenever the admin switches are off or a provider fails.
-     */
-    private function attachAdvisory(AgentDecision $decision, AssistanceRequest $request): AgentDecision
-    {
-        try {
-            $advisory = $this->advisoryGate->assessHardship([
-                'reason' => (string) ($request->reason ?? ''),
-                'category' => $request->category instanceof \BackedEnum ? $request->category->value : (string) $request->category,
-                'attendance_rate' => (float) ($request->student?->attendance_rate ?? 0),
-                'enrollment_status' => (string) ($request->student?->enrollment_status ?? ''),
-                'academic_status' => (string) ($request->student?->academic_status ?? ''),
-            ]);
-        } catch (\Throwable $e) {
-            report($e);
-
-            return $decision;
-        }
-
-        if (! $advisory instanceof AdvisoryEnvelope) {
-            return $decision;
-        }
-
-        $decision->update([
-            'metadata' => $advisory->mergeIntoMetadata($decision->metadata ?? []),
-        ]);
-
-        return $decision->refresh();
+        return $decision;
     }
 }

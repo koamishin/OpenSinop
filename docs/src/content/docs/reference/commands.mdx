@@ -86,10 +86,17 @@ faucet. Neither is a harmless way to populate a dashboard.
 - `student:generate-wallet`: operator-controlled pilot wallet generation; inspect `--list` first.
 - `student:fund-wallet`: explicit pilot funding; inspect `--help` and current provider limits.
 - `app:demo`: legacy fixtures/cycle, documented only for simulated local use in [Local setup](../../getting-started/local-development/#about-appdemo).
-- `eduflow:autonomous-pipeline-bridge`: experimental tuition-to-vendor processing. See [Current limits](../../institution/safety-readiness/#experimental-automatic-bridge).
+- `eduflow:autonomous-pipeline-bridge`: read-only receipt review handoff; never submits funds. See [Current limits](../../institution/safety-readiness/#read-only-bridge-and-assistance-boundaries).
 
 ## Starter scaffolding commands
 
 `setup:starter-kit` and `install:features` belong to starter/feature scaffolding, not
 ordinary school operation. They can rewrite or consume scaffolding. Inspect them
 before use; they are not recommended installation or recovery steps for a school.
+
+## Assistance commentary
+
+`app:dispatch-assistance-advice` recovers queued optional assistance commentary.
+Requires approved provider disclosure, advisory enablement, institution context and
+a database/Redis queue with `retry_after > 120`. It submits no payments and does not
+reopen concluded or interrupted provider attempts automatically.

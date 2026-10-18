@@ -9,7 +9,7 @@ queued jobs or scheduled recovery work are running.
 ## Before starting processes
 
 Review [runtime configuration](../../getting-started/configuration/) first. The
-experimental automatic bridge defaults on and can attempt payments when invoked.
+legacy bridge is now read-only and defaults off.
 For evaluation, disable both bridge flags, keep payment submission off, set the vendor
 stop switch, and keep live signing credentials absent.
 
@@ -72,7 +72,9 @@ unintentionally on the same instance. Review shared locking when using multiple 
 | Reconcile submitted vendor payments | Every minute under the submission runtime. |
 | Dispatch policy evaluations | Every minute when institution policy advice is enabled. |
 | Check mandate occurrences | Every minute when mandate runtime is enabled. |
-| Run automatic tuition-to-vendor bridge | Every five minutes; **enabled by default**. |
+| Read-only receipt bridge inspection | Every five minutes only when explicitly enabled; no spending authority. |
+| Recover student-controlled receipts | Every five minutes when background finance enabled. |
+| Recover assistance commentary | Every five minutes; dispatch requires advisory/disclosure switches and durable queue. |
 
 Each task has its own guard. A low or zero policy limit is not a universal switch for
 all automated behavior.
@@ -128,3 +130,17 @@ outbox may contain unresolved money movement: reconcile existing attempts before
 allowing new sends.
 
 See [Troubleshooting](../../reference/troubleshooting/) for first checks.
+
+## Assistance commentary recovery
+
+Run `php artisan app:dispatch-assistance-advice` to redispatch committed decisions whose
+`metadata.assistance_advice.state` is `queued`. The decision row is the durable obligation;
+queue delivery is not exactly once. Workers claim once under row lock before contacting
+the provider, and write only namespaced commentary. Use database/Redis with
+`retry_after > 120`; sync dispatch is refused by the recovery command.
+
+Recovery parks running commentary older than five minutes as `needs_review`, even when
+advisory is disabled. It never redispatches that interrupted provider attempt.
+A worker crash after claim or provider failure requires review, not a blind provider retry.
+Inspect `failed_jobs` and the decision metadata; never reset financial status or resend
+funds to recover commentary. Recovery does not backfill older decisions automatically.

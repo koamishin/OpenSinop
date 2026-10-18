@@ -30,9 +30,8 @@ EDUFLOW_MANDATE_ENABLED=false
 EDUFLOW_MANDATE_ALLOWANCE=false
 ```
 
-Keep signing credentials out of the evaluation instance. Do not use direct bridge
-commands or **Auto-Verify & Bridge**: not every direct entry point checks the enabled
-flag. See [Current limits](../../institution/safety-readiness/).
+Keep signing credentials out of the evaluation instance. Bridge inspection does not
+replace independent receipt or payment review. See [Current limits](../../institution/safety-readiness/).
 
 ## School identity and access
 
@@ -68,21 +67,15 @@ queue connection; jobs such as policy evaluation also use its default queue.
 See [Run background services](../../guides/operations/) for named payment queues and
 the required retry/timeout relationship.
 
-## One exception: the Autonomous Pipeline Bridge is on by default
+## Background receipt and advisory configuration
 
-The bridge is separate from ordinary payment submission. Its current defaults are:
+The legacy bridge flags default off and its implementation is read-only. No flag
+creates payment authorization, staff accounts or MFA evidence.
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `EDUFLOW_AUTONOMOUS_PIPELINE_ENABLED` | `true` | Enables scheduled and some automatic bridge calls. Not a universal entry-point guard. |
-| `EDUFLOW_AUTONOMOUS_PIPELINE_AUTO_DISBURSE` | `true` | Allows later vendor submission within the bridge's ceiling. Earlier steps can still change review/planning records when off. |
-| `EDUFLOW_AUTONOMOUS_PIPELINE_MAX_USDC` | `50.00` | Bill ceiling, not proof of a safe cumulative spending policy. |
-| `EDUFLOW_AUTONOMOUS_PIPELINE_MAKER_ID` | `4` | Preferred staff record; the bridge can fall back to other users. |
-| `EDUFLOW_AUTONOMOUS_PIPELINE_REVIEWER_ID` | `1` | Preferred reviewer record; selection can fall back and grant permission. |
-
-The bridge can generate reviewer codes and set `eduflow.submission.enabled` to `true`
-inside the process. It is not fresh independent staff approval. Do not enable it merely
-to make an empty dashboard look active.
+- `EDUFLOW_TUITION_INTAKE_OWNER_ID`: existing verified institution finance owner, never payer.
+- `EDUFLOW_AUTONOMOUS_PIPELINE_REVIEWER_ID`: explicitly configured existing institution admin requester for background receipt classification; not a payment approver impersonation.
+- Advisory and disclosure are separate operator settings. Enable both only after approving provider data sharing.
+- Database/Redis queues must have `retry_after` greater than job timeout (120 seconds for assistance commentary; 180 for institution policy evaluation).
 
 ## Optional wallet connection
 

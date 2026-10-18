@@ -16,6 +16,7 @@ use App\Models\Student;
 use App\Models\TuitionAccount;
 use App\Models\User;
 use App\Models\Wallet;
+use Spatie\Permission\Models\Role;
 
 beforeEach(function (): void {
     $this->org = Organization::create([
@@ -146,10 +147,11 @@ test('approves escalated remainder via second transfer', function (): void {
     ]);
 
     $eval = app(EvaluateAssistancePolicy::class)->handle($request, $this->fund, $this->policy);
-    $approver = User::factory()->create();
+    $student->forceFill(['organization_id' => $this->org->id])->save();
+    $approver = User::factory()->create(['organization_id' => $this->org->id])->assignRole(Role::findOrCreate('finance_officer', 'web'));
 
-    $approval = app(ApproveEscalatedRequest::class)->handle($request, $eval['decision'], $approver, $this->fund, 'Approved for demo');
+    $approval = app(ApproveEscalatedRequest::class)->handle($request->fresh(), $eval['decision'], $approver, $this->fund, 'Approved for demo');
 
     expect($approval->status)->toBe('approved')
-        ->and($request->fresh()->status instanceof AssistanceStatus ? $request->fresh()->status->value : $request->fresh()->status)->toBe('resolved');
+        ->and($request->fresh()->status instanceof AssistanceStatus ? $request->fresh()->status->value : $request->fresh()->status)->toBe('in_progress');
 });

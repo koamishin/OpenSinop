@@ -77,6 +77,8 @@ beforeEach(function (): void {
         'attendance_rate' => 95.00,
     ]);
 
+    $this->student->forceFill(['organization_id' => $this->org->id])->save();
+    $this->officer->forceFill(['organization_id' => $this->org->id])->save();
     $this->term = AcademicTerm::factory()->create();
 
     TuitionAccount::factory()->create([
@@ -162,10 +164,10 @@ test('finance officer approves remainder through the panel action', function ():
 
     // The agent proposed 150 but paid none of it. Only the officer's approval
     // moves funds, and only the escalated portion it actually covers.
-    expect($request->status instanceof AssistanceStatus ? $request->status->value : $request->status)->toBe(AssistanceStatus::RESOLVED->value)
-        ->and($this->wallet->fresh()->balance)->toBe(25370.00)
-        ->and($this->fund->fresh()->balance_base_units)->toBe(9950_000000)
-        ->and($decision->approved_amount)->toBe(150.00)
+    expect($request->status instanceof AssistanceStatus ? $request->status->value : $request->status)->toBe(AssistanceStatus::IN_PROGRESS->value)
+        ->and($this->wallet->fresh()->balance)->toBe(25420.00)
+        ->and($this->fund->fresh()->balance_base_units)->toBe(10000_000000)
+        ->and($decision->approved_amount)->toBe(100.00)
         ->and(Approval::where('agent_decision_id', $decision->id)->value('status'))->toBe('approved');
 
     $settlement = Transaction::where('reference_type', AssistanceRequest::class)
@@ -174,9 +176,7 @@ test('finance officer approves remainder through the panel action', function ():
 
     // Exactly one settlement, the one the officer authorized. Before this
     // change there were two: an automatic 100 and a human-approved 50.
-    expect($settlement)->toHaveCount(1)
-        ->and($settlement->sum('amount'))->toBe(50.00)
-        ->and($settlement->first()->metadata['human_override'] ?? null)->toBeTrue();
+    expect($settlement)->toHaveCount(0);
 });
 
 test('rejecting the remainder closes the request without moving more funds', function (): void {
@@ -224,7 +224,7 @@ test('approve action is hidden once nothing remains pending', function (): void 
 
     $fresh = $request->fresh();
 
-    expect($fresh->pendingReviewBaseUnits())->toBe(0);
+    expect($fresh->pendingReviewBaseUnits())->toBe(50_000000);
 
     Livewire::test(ListAssistanceRequests::class)
         ->assertTableActionHidden('approve_escalated', record: $fresh)

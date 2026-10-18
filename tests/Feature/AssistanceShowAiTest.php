@@ -79,6 +79,7 @@ test('show assistance page provides rich dual-currency AI explanation when evalu
         'status' => AssistanceStatus::SUBMITTED,
     ]);
 
+    $this->student->forceFill(['organization_id' => $this->org->id])->save();
     app(EduFlowAgent::class)->runAutonomousCycle($this->org);
 
     $response = $this->actingAs($this->user)->get(route('assistance.show', $request));

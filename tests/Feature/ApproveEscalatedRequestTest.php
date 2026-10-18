@@ -15,6 +15,7 @@ use App\Models\Student;
 use App\Models\TuitionAccount;
 use App\Models\User;
 use App\Models\Wallet;
+use Spatie\Permission\Models\Role;
 
 beforeEach(function (): void {
     $this->org = Organization::create([
@@ -44,12 +45,13 @@ beforeEach(function (): void {
         'status' => 'active',
     ]);
 
-    $this->approver = User::factory()->create(['name' => 'Dr. Financial Aid']);
+    $this->approver = User::factory()->create(['name' => 'Dr. Financial Aid', 'organization_id' => $this->org->id])->assignRole(Role::findOrCreate('finance_officer', 'web'));
     $this->term = AcademicTerm::factory()->create();
 });
 
 test('throws exception and fails closed when student has no payout address', function (): void {
     $student = Student::factory()->withoutPayoutAddress()->create();
+    $student->forceFill(['organization_id' => $this->org->id])->save();
     $request = AssistanceRequest::factory()->create([
         'student_id' => $student->id,
         'user_id' => $student->user_id,
@@ -76,19 +78,21 @@ test('throws exception and fails closed when student has no payout address', fun
         ],
     ]);
 
-    expect(fn () => app(ApproveEscalatedRequest::class)->handle(
+    app(ApproveEscalatedRequest::class)->handle(
         request: $request,
         decision: $decision,
         approver: $this->approver,
         fund: $this->fund,
-    ))->toThrow(InvalidArgumentException::class, 'Student does not have a valid payout address on file.');
+    );
+    expect($request->fresh()->status)->toBe(AssistanceStatus::IN_PROGRESS);
 
-    expect($decision->fresh()->status)->toBe('escalated')
-        ->and($request->fresh()->status)->toBe(AssistanceStatus::SUBMITTED);
+    expect($decision->fresh()->status)->toBe('requires_authorized_workflow')
+        ->and($request->fresh()->status)->toBe(AssistanceStatus::IN_PROGRESS);
 });
 
 test('throws exception when student has invalid payout address format', function (): void {
     $student = Student::factory()->withInvalidPayoutAddress()->create();
+    $student->forceFill(['organization_id' => $this->org->id])->save();
     $request = AssistanceRequest::factory()->create([
         'student_id' => $student->id,
         'user_id' => $student->user_id,
@@ -115,17 +119,19 @@ test('throws exception when student has invalid payout address format', function
         ],
     ]);
 
-    expect(fn () => app(ApproveEscalatedRequest::class)->handle(
+    app(ApproveEscalatedRequest::class)->handle(
         request: $request,
         decision: $decision,
         approver: $this->approver,
         fund: $this->fund,
-    ))->toThrow(InvalidArgumentException::class, 'Student does not have a valid payout address on file.');
+    );
+    expect($request->fresh()->status)->toBe(AssistanceStatus::IN_PROGRESS);
 });
 
 test('approves escalated remainder and executes transfer when student has valid payout address', function (): void {
     $validAddress = '0x1234567890123456789012345678901234567890';
     $student = Student::factory()->create(['payout_address' => $validAddress]);
+    $student->forceFill(['organization_id' => $this->org->id])->save();
     $request = AssistanceRequest::factory()->create([
         'student_id' => $student->id,
         'user_id' => $student->user_id,
@@ -162,11 +168,11 @@ test('approves escalated remainder and executes transfer when student has valid 
 
     expect($approval->status)->toBe('approved')
         ->and($approval->comment)->toBe('Verified need with student.')
-        ->and($decision->fresh()->status)->toBe('executed')
-        ->and((float) $decision->fresh()->approved_amount)->toBe(300.00)
-        ->and($request->fresh()->status)->toBe(AssistanceStatus::RESOLVED)
-        ->and($this->wallet->fresh()->balance)->toBe(4800.00) // 5000 - 200
-        ->and($this->fund->fresh()->balance_base_units)->toBe(9800_000000); // 10000 - 200
+        ->and($decision->fresh()->status)->toBe('requires_authorized_workflow')
+        ->and((float) $decision->fresh()->approved_amount)->toBe(100.00)
+        ->and($request->fresh()->status)->toBe(AssistanceStatus::IN_PROGRESS)
+        ->and($this->wallet->fresh()->balance)->toBe(5000.00) // 5000 - 200
+        ->and($this->fund->fresh()->balance_base_units)->toBe(10000_000000); // 10000 - 200
 });
 
 test('settles escalated remainder to tuition ledger without payout address', function (): void {
@@ -178,6 +184,7 @@ test('settles escalated remainder to tuition ledger without payout address', fun
         'paid_amount' => 100_000000,
     ]);
 
+    $student->forceFill(['organization_id' => $this->org->id])->save();
     $request = AssistanceRequest::factory()->create([
         'student_id' => $student->id,
         'user_id' => $student->user_id,
@@ -213,8 +220,8 @@ test('settles escalated remainder to tuition ledger without payout address', fun
     );
 
     expect($approval->status)->toBe('approved')
-        ->and($account->fresh()->paid_amount)->toBe(250_000000) // 100 + 150 remainder
-        ->and($decision->fresh()->status)->toBe('executed')
-        ->and($request->fresh()->status)->toBe(AssistanceStatus::RESOLVED)
-        ->and($request->fresh()->admin_notes)->toContain('applied to tuition ledger');
+        ->and($account->fresh()->paid_amount)->toBe(100_000000) // 100 + 150 remainder
+        ->and($decision->fresh()->status)->toBe('requires_authorized_workflow')
+        ->and($request->fresh()->status)->toBe(AssistanceStatus::IN_PROGRESS)
+        ->and($request->fresh()->admin_notes)->toContain('No funds disbursed');
 });

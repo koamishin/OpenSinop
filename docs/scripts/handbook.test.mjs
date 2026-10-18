@@ -13,15 +13,14 @@ test('the welcome page routes readers by task rather than database model names',
     assert.ok(home.includes('guides/workflows/'));
 });
 
-test('bridge limitations are documented against actual credential and submission behavior', () => {
+test('read-only bridge documentation matches removed spending capability', () => {
     const bridge = source('app/Services/AutonomousPipelineBridge.php');
-    assert.ok(bridge.includes('generateReviewerTotp($reviewer)'));
-    assert.ok(bridge.includes("'password' => 'password'"));
-    assert.ok(bridge.includes("config(['eduflow.submission.enabled' => true])"));
-    const limits = page('institution/safety-readiness');
-    assert.match(limits, /hardcoded demo password/);
-    assert.match(limits, /not checked by\s+every direct entry point/);
-    assert.match(page('guides/collections'), /Auto-Verify & Bridge/);
+    assert.ok(!bridge.includes('generateReviewerTotp'));
+    assert.ok(!bridge.includes('givePermissionTo'));
+    assert.ok(!bridge.includes('reviewVendorPayment->handle'));
+    assert.match(page('institution/safety-readiness'), /no longer grants/);
+    assert.match(page('guides/operations'), /read-only and defaults off/);
+    assert.match(page('guides/policy-advice'), /cannot borrow another staff identity/);
 });
 
 test('operator guidance does not invent environment controls that the current code never reads', () => {

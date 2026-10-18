@@ -73,10 +73,10 @@ can see depends on your role and permissions.
 - **Reserving capacity** records an application hold. It does not lock the Circle wallet against outside use.
 - **Verified testnet movement** proves movement on the test network. It does not settle a local bank payable.
 
-The ordinary reviewed path keeps those steps separate. The experimental automatic bridge
-combines several of them and has different side effects; do not assume its recorded
-reviewer IDs prove a person independently approved a transfer.
-See [Current limits](../../institution/safety-readiness/#experimental-automatic-bridge).
+The ordinary reviewed path keeps these steps separate. The legacy bridge is now
+read-only: it reports missing review/authorization and never submits funds. Historical
+bridge reviewer records still require audit; they do not prove independent consent.
+See [Current limits](../../institution/safety-readiness/#read-only-bridge-and-assistance-boundaries).
 
 ## Background runtime
 

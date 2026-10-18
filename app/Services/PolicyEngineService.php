@@ -121,7 +121,7 @@ final class PolicyEngineService
             'approved_amount' => $evaluation['approved_amount'],
             'requires_approval' => $evaluation['requires_human_approval'],
             'status' => match ($evaluation['decision']) {
-                'auto_approve', 'partial_approval' => 'executed',
+                'auto_approve', 'partial_approval' => 'requires_authorized_workflow',
                 'escalate' => 'escalated',
                 default => 'pending',
             },
