@@ -10,6 +10,7 @@ use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\Str;
 use Livewire\Features\SupportFileUploads\FileUploadConfiguration;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
@@ -29,6 +30,7 @@ function collectionBrowserStaff(): array
 
 test('cashier can finish three-step collection entry after a completed upload in a browser', function (): void {
     $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
     $staff = collectionBrowserStaff();
     $this->actingAs($staff['cashier']);
     $this->travelTo(now()->setDate(2026, 10, 11)->setTime(12, 0));
@@ -63,6 +65,7 @@ test('cashier can finish three-step collection entry after a completed upload in
 
 test('collection entry stays usable on mobile with no page overflow', function (): void {
     $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
     $staff = collectionBrowserStaff();
     $this->actingAs($staff['reviewer']);
     $page = visit('/admin/collections')->on()->mobile()->assertSee('Record fees received')->assertNoJavaScriptErrors();
@@ -73,6 +76,7 @@ test('collection entry stays usable on mobile with no page overflow', function (
 
 test('independent reviewer can inspect a retained collection report in a browser', function (): void {
     $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
     $staff = collectionBrowserStaff();
     $file = UploadedFile::fake()->createWithContent('cashier-report.csv', file_get_contents(base_path('tests/Fixtures/collections/cashier-report.csv')));
     app(CaptureCollectionBatch::class)->handle($staff['cashier'], ['capture_key' => (string) Str::uuid(),
@@ -90,6 +94,7 @@ test('independent reviewer can inspect a retained collection report in a browser
 
 test('long chain references keep receipt review reachable without horizontal page overflow', function (): void {
     $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
     $staff = collectionBrowserStaff();
     $hash = '0x'.str_repeat('e', 64);
     app(CaptureCollectionBatch::class)->handle($staff['cashier'], [

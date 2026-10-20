@@ -14,10 +14,12 @@ use App\Services\Ai\AiProviderResolver;
 use App\Services\InstallationInstitution;
 use App\Services\InstitutionPolicyInterpreter;
 use App\Settings\AiSettings;
+use Illuminate\Support\Facades\Vite;
 use Spatie\Permission\Models\Role;
 
 test('finance authors custom policy categories examples and controls in ReUI workspace', function (): void {
     $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
     config(['eduflow.institution_id' => null]);
     Organization::factory()->create();
     $maker = User::factory()->create()->assignRole(Role::findOrCreate('finance_officer', 'web'));
@@ -40,6 +42,7 @@ test('finance authors custom policy categories examples and controls in ReUI wor
 
 test('reviewer publishes exact tested policy through ReUI without creating payment', function (): void {
     $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
     $c = institutionPolicyContext();
     app(AiSettings::class)->advisory_enabled = true;
     app(AiSettings::class)->disclosure_accepted = true;
@@ -55,6 +58,7 @@ test('reviewer publishes exact tested policy through ReUI without creating payme
 
 test('policy workspace works on mobile dark mode with no horizontal overflow', function (): void {
     $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
     $c = institutionPolicyContext();
     $this->actingAs($c['maker']);
     $page = visit('/finance/policies')->on()->mobile()->assertSee('Your policy. Clear decisions.');
@@ -66,6 +70,7 @@ test('policy workspace works on mobile dark mode with no horizontal overflow', f
 
 test('playground queues policy interpretation and shows persisted result with real client assets', function (): void {
     $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
     $c = institutionPolicyContext();
     app(AiSettings::class)->advisory_enabled = true;
     app(AiSettings::class)->disclosure_accepted = true;
@@ -82,6 +87,7 @@ test('playground queues policy interpretation and shows persisted result with re
 
 test('simple rulebook lets regular users toggle categories pick safety limits and activate policy in one click', function (): void {
     $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
     config(['eduflow.institution_id' => null]);
     Organization::factory()->create(['name' => 'Sunnyvale High School']);
     $admin = User::factory()->create()->assignRole(Role::findOrCreate('super_admin', 'web'));
