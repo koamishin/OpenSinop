@@ -61,16 +61,14 @@ class BackfillStudentControlledPayments extends Command
             $tuitionPayment = $isTuition
                 ? StudentTuitionPayment::query()->where('request_key', $payment->id)->orWhere('tx_hash', $hash)->first()
                 : null;
-            $billPayment = ! $isTuition
-                ? StudentBillPayment::query()->where('request_key', $payment->id)->orWhere('tx_hash', $hash)->first()
-                : null;
+            $billPayment = $isTuition
+                ? null
+                : StudentBillPayment::query()->where('request_key', $payment->id)->orWhere('tx_hash', $hash)->first();
             $paymentRecord = $tuitionPayment ?? $billPayment;
 
             $hasBatch = $paymentRecord instanceof StudentTuitionPayment
                 ? CollectionBatch::query()->where('student_tuition_payment_id', $paymentRecord->id)->exists()
-                : ($paymentRecord instanceof StudentBillPayment
-                    ? CollectionBatch::query()->where('student_bill_payment_id', $paymentRecord->id)->exists()
-                    : false);
+                : ($paymentRecord instanceof StudentBillPayment && CollectionBatch::query()->where('student_bill_payment_id', $paymentRecord->id)->exists());
 
             if ($hasTx && $hasPaymentRecord && $hasBatch) {
                 $alreadyComplete++;

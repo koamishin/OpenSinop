@@ -205,7 +205,7 @@ class StudentControlledCheckout
 
             // Record verified inflow locally before returning success; provider work stays queued.
             try {
-                DB::transaction(fn () => $this->recordLockedSettlement($stored, reconcileReceipt: false));
+                DB::transaction(fn (): StudentControlledPayment => $this->recordLockedSettlement($stored, reconcileReceipt: false));
             } catch (\Throwable $exception) {
                 report($exception);
             }
@@ -322,7 +322,7 @@ class StudentControlledCheckout
                 ->first();
 
             if ($billPayment === null && $reconcileReceipt) {
-                $billPayment = $this->createBillPaymentRecord($payment, $institution);
+                $billPayment = $this->createBillPaymentRecord();
             }
         }
 
@@ -377,7 +377,7 @@ class StudentControlledCheckout
         return $payment;
     }
 
-    private function createBillPaymentRecord(StudentControlledPayment $payment, Organization $institution): ?StudentBillPayment
+    private function createBillPaymentRecord(): ?StudentBillPayment
     {
         throw ValidationException::withMessages(['receipt' => 'Campus bill receipt requires a source-linked student-controlled reconciliation path. Operator consent is never synthesized. Student payment remains credited.']);
     }
@@ -417,7 +417,7 @@ class StudentControlledCheckout
         $owner = User::query()->find(config('eduflow.student_tuition.intake_owner_id'));
         if (! $owner instanceof User || ! $owner->hasVerifiedEmail()
             || ! $owner->hasAnyRole(['finance_officer', 'admin', 'super_admin'])
-            || $owner->id === $student->user_id || $institution === null
+            || $owner->id === $student->user_id || ! $institution instanceof Organization
             || $owner->organization_id !== $institution->id) {
             throw ValidationException::withMessages(['intake' => 'Configure a verified institution finance intake owner who is not the payer. No roles or approvals were created.']);
         }

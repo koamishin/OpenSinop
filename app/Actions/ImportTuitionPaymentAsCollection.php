@@ -10,6 +10,7 @@ use App\Models\PaymentIntent;
 use App\Models\StudentBillPayment;
 use App\Models\StudentTuitionPayment;
 use App\Models\User;
+use App\Models\Wallet;
 use App\Services\FinanceWorkflows;
 use App\Services\InstallationInstitution;
 use Brick\Math\BigInteger;
@@ -93,7 +94,7 @@ final readonly class ImportTuitionPaymentAsCollection
         $institution = $this->institutions->require();
         $wallet = $institution->primaryWallet();
         $treasury = (string) config('lepton.arc.treasury');
-        if ($treasury === '' && $wallet !== null) {
+        if ($treasury === '' && $wallet instanceof Wallet) {
             $treasury = $wallet->address;
         }
         $currency = 'USDC';

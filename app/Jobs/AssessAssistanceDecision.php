@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\Ai\Advisory\AdvisoryEnvelope;
 use App\Ai\Advisory\AdvisoryGate;
 use App\Models\AgentDecision;
 use App\Models\AssistanceRequest;
@@ -68,7 +69,7 @@ class AssessAssistanceDecision implements ShouldQueue
             $currentRequestDigest = $request === null ? '' : PaymentIntent::digest($request->only(['student_id', 'reason', 'category', 'requested_amount']));
             if ($request === null || $request->student?->organization_id !== $decision->organization_id
                 || ! hash_equals($claim['request_digest'], $currentRequestDigest)
-                || $advice === null || ! app(AiSettings::class)->mayCallProvider() || ! hash_equals($claim['digest'], PaymentIntent::digest($decision->input_snapshot))) {
+                || ! $advice instanceof AdvisoryEnvelope || ! app(AiSettings::class)->mayCallProvider() || ! hash_equals($claim['digest'], PaymentIntent::digest($decision->input_snapshot))) {
                 $this->finish($decision, 'needs_review');
 
                 return;
@@ -89,7 +90,7 @@ class AssessAssistanceDecision implements ShouldQueue
         if ($decision !== null && ($decision->metadata['assistance_advice']['state'] ?? null) === 'running') {
             $this->finish($decision, 'needs_review');
         }
-        if ($exception !== null) {
+        if ($exception instanceof Throwable) {
             report($exception);
         }
     }
