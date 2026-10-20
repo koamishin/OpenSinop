@@ -375,6 +375,55 @@ test('connected wallet screen displays verified identity and usable payment acti
         ->assertNoJavaScriptErrors();
 })->group('browser');
 
+test('changing a wallet opens selection and cancellation preserves the verified wallet', function (): void {
+    $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
+    controlledWallet($this->student, $this->address);
+    $walletId = $this->student->fresh()->wallet->id;
+
+    $page = visit(route('student.wallet.show'))->on()->mobile()
+        ->click('@wallet-connection-entry')
+        ->assertSee('Connected & verified')
+        ->click('@wallet-change-open')
+        ->assertSee('Switch to another wallet?')
+        ->click('@wallet-change-keep')
+        ->assertDontSee('Switch to another wallet?')
+        ->assertSee('Connected & verified')
+        ->click('@wallet-change-open')
+        ->click('@wallet-change-confirm')
+        ->assertSee('Choose how to connect')
+        ->assertSee('Your current wallet stays active until you verify the new one.')
+        ->assertDontSee('Connected & verified')
+        ->assertNoJavaScriptErrors();
+
+    expect($this->student->fresh()->wallet->id)->toBe($walletId)
+        ->and($this->student->fresh()->payout_address)->toBe($this->address);
+
+    $page->click('@wallet-change-cancel')
+        ->assertSee('Connected & verified')
+        ->assertSee($this->address)
+        ->assertNoJavaScriptErrors();
+})->group('browser');
+
+test('wallet change keeps the old wallet when browser authorization fails', function (): void {
+    $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
+    controlledWallet($this->student, $this->address);
+    $walletId = $this->student->fresh()->wallet->id;
+    $page = visit(route('student.controlled-wallet.show'))
+        ->click('@wallet-change-open')
+        ->click('@wallet-change-confirm');
+    $page->script('window.ethereum = { request: async () => { throw new Error("Wallet authorization rejected"); } };');
+    $page->click('@wallet-connect-browser')
+        ->assertSee('Wallet authorization rejected')
+        ->assertSee('Choose how to connect')
+        ->assertNoJavaScriptErrors();
+
+    expect($this->student->fresh()->wallet->id)->toBe($walletId)
+        ->and($this->student->fresh()->payout_address)->toBe($this->address);
+    $page->refresh()->assertSee('Connected & verified')->assertSee($this->address);
+})->group('browser');
+
 test('switching from a Circle wallet to a browser wallet retires the old one and keeps its history', function (): void {
     $circleAddress = $this->address;
     $browserAddress = '0x'.str_repeat('f', 40);

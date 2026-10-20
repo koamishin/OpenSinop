@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Models\Student;
 use App\Models\StudentWallet;
 use App\Models\User;
+use Illuminate\Support\Facades\Vite;
 use Spatie\Permission\Models\Role;
 use Yukazakiri\Lepton\Gateways\FakeLeptonGateway;
 
@@ -168,3 +169,20 @@ test('Inertia wallet refresh redirects back instead of returning plain JSON', fu
         ->assertRedirect(route('student.pay'))
         ->assertSessionHas('wallet_refresh_available', true);
 });
+
+test('wallet passport and connection page render in browser without horizontal overflow', function (): void {
+    $this->withVite();
+    Vite::useHotFile(storage_path('framework/testing-no-vite-hot'));
+    $student = Student::factory()->withoutPayoutAddress()->create();
+    actingAsStudent($student);
+    $page = visit(route('student.wallet.show'))->on()->mobile()
+        ->assertSee('Your wallet.')
+        ->assertSee('No wallet connected')
+        ->assertSee('Make it yours.')
+        ->assertSee('Transfer journal')
+        ->assertNoJavaScriptErrors();
+    expect($page->script('document.documentElement.scrollWidth <= window.innerWidth'))->toBeTrue();
+    $page->click('@wallet-connection-entry')->assertSee('Your keys. Your choice.')
+        ->assertSee('Connect browser wallet')->assertNoJavaScriptErrors();
+    expect($page->script('document.documentElement.scrollWidth <= window.innerWidth'))->toBeTrue();
+})->group('browser');
