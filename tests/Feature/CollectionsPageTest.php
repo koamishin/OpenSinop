@@ -13,6 +13,7 @@ use App\Models\PaymentIntent;
 use App\Models\StudentTuitionPayment;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Models\Wallet;
 use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\FileUpload;
@@ -435,10 +436,15 @@ test('collections table exposes auto-verify action on unreviewed tuition batch',
     $page->assertActionVisible(TestAction::make('autonomousReviewAndSettle')->table($batch));
 });
 
-test('autonomousReviewAndSettle action bridges tuition payment', function (): void {
+test('autonomousReviewAndSettle action bridges tuition payment without recording a review', function (): void {
     $c = cashierCollectionContext('admin');
     $treasury = '0x2629de3b67042842ab2a2e33a1bd81ca583d975c';
     config(['lepton.arc.treasury' => $treasury, 'eduflow.autonomous_pipeline.enabled' => true]);
+    Wallet::factory()->create([
+        'organization_id' => $c['institution']->id,
+        'address' => $treasury,
+        'status' => 'active',
+    ]);
     $tuitionPayment = StudentTuitionPayment::factory()->create([
         'request_key' => (string) Str::uuid(),
         'amount_base_units' => 5_000000,
@@ -454,6 +460,13 @@ test('autonomousReviewAndSettle action bridges tuition payment', function (): vo
     actingAs($c['reviewer']);
     $page = Livewire::test(Collections::class);
     $page->callAction(TestAction::make('autonomousReviewAndSettle')->table($batch));
-    $page->assertHasNoActionErrors();
-    expect(CollectionBatchReview::query()->where('collection_batch_id', $batch->id)->exists())->toBeTrue();
+    $page->assertHasNoActionErrors()
+        ->assertNotified('Tuition Verified & Bridged')
+        ->assertNotNotified('Bridge execution failed');
+
+    // The bridge is a read-only handoff to staff-reviewed workflows: it names the
+    // next human review and records nothing itself, so an automated action can
+    // never manufacture the receipt review that dual control requires.
+    expect(CollectionBatchReview::query()->where('collection_batch_id', $batch->id)->exists())->toBeFalse()
+        ->and($batch->fresh()->reviews()->count())->toBe(0);
 });

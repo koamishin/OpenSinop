@@ -251,7 +251,7 @@ class Collections extends Page implements HasTable
                         && Auth::user()->hasAnyRole(['admin', 'super_admin', 'finance_officer']))
                     ->requiresConfirmation()
                     ->modalHeading('Auto-Verify & Bridge Tuition')
-                    ->modalDescription('Execute independent dual-control review and autonomous pipeline bridging for this verified student payment.')
+                    ->modalDescription('Verify this payment belongs to this installation\'s treasury and hand it to the next staff review. This records no review and authorizes no payment.')
                     ->modalSubmitActionLabel('Verify & Bridge')
                     ->action(function (CollectionBatch $record): void {
                         $payment = $record->tuitionPayment;
@@ -262,10 +262,13 @@ class Collections extends Page implements HasTable
                         }
 
                         try {
-                            app(AutonomousPipelineBridge::class)->bridgePayment($payment);
+                            $bridge = app(AutonomousPipelineBridge::class)->bridgePayment($payment);
+                            $stage = (string) ($bridge['stage'] ?? '');
                             Notification::make()
                                 ->title('Tuition Verified & Bridged')
-                                ->body('Dual-control receipt review and pipeline settlement executed successfully.')
+                                ->body($stage === 'awaiting_manual_authorization'
+                                    ? 'Receipt review is already recorded. This payment still needs a staff member to authorize it.'
+                                    : 'Payment is bridged and still waiting for an independent receipt review. Nothing is approved or paid here.')
                                 ->success()
                                 ->send();
                         } catch (Throwable $e) {
