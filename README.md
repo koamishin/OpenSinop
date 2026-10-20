@@ -463,8 +463,9 @@ These are policy-evaluation scenarios, not proof of payment. Assistance eligibil
 finance eligibility review do not send funds, deduct fund balances or resolve unpaid
 requests. Legacy simulated assistance payouts are disabled. Actual transfers require a
 separately authorized workflow and matching Arc settlement proof; the assistance-specific
-durable payout path is still pending. Do not treat an old demo's 85 USDC total as current
-execution behavior.
+durable payout path is still pending. The seeded cycle still *decides* **85 USDC** of
+payments (30 + 45 + the 10 USDC aid), but that is a policy decision total and not settled
+money, so it is not current execution behavior.
 
 Optional assistance commentary is queued after the deterministic decision is recorded.
 Run `php artisan app:dispatch-assistance-advice` for missed-dispatch recovery. A durable
@@ -507,7 +508,7 @@ changes authoritative amounts, recipient or payment status.
 
 ## Testing & Quality Assurance
 
-The entire test suite runs offline using `LEPTON_DRIVER=fake` and SDK fakes—no network access, Circle credentials, or testnet funds are required.
+The entire test suite runs offline using `LEPTON_DRIVER=fake` and SDK fakes—no network access, Circle credentials, or testnet funds are required. A fake-driver run is **not a simulation**: it never broadcasts a transaction, never reaches Arc, and never moves money, so never mistake a fake run for proof that a payment settled.
 
 ```bash
 # Run the full test suite (Pint lint check + Pest tests)
