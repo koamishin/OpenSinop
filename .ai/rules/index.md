@@ -6,9 +6,10 @@ Before planning or editing, find the row whose globs match the file's path and r
 | --- | --- |
 | app/Actions/RollOverFundingWindow.php, app/Actions/ReserveVendorPayment.php, app/Actions/ReviewVendorPayment.php | .ai/rules/actions.md |
 | app/Services/Advisory/** | .ai/rules/advisory.md |
-| app/Services/InstitutionPolicy*.php, app/Models/InstitutionPolicy*.php, app/Jobs/AssessInstitutionPolicy.php, app/Ai/Agents/InstitutionPolicyAnalyst.php | .ai/rules/agents.md |
+| app/Services/InstitutionPolicy*.php, app/Models/InstitutionPolicy*.php, app/Jobs/AssessInstitutionPolicy.php, app/Agents/InstitutionPolicyAnalyst.php | .ai/rules/agents.md |
 | app/Ai/**/*.php, tests/Feature/Ai/**/*.php, config/ai.php | .ai/rules/ai-agents.md |
 | app/**/*.php | .ai/rules/app.md |
+| tests/**, resources/js/** | .ai/rules/browser-tests.md |
 | app/Actions/CaptureCollectionBatch.php, app/Actions/ImportTuitionPaymentAsCollection.php, app/Models/CollectionBatch.php, app/Services/TuitionReceiptIntake.php, app/Jobs/ReconcileTuitionReceipt.php, app/Console/Commands/ReconcileTuitionReceipts.php | .ai/rules/collections.md |
 | app/Http/Controllers/** | .ai/rules/controllers.md |
 | resources/css/**/*.css, resources/css/bulletin.css | .ai/rules/css.md |
