@@ -1,0 +1,129 @@
+---
+title: Security advisories
+description: What to do when a PHP runtime, Node.js, or dependency advisory affects an OpenSinop installation.
+---
+
+OpenSinop ships as a container image, so most advisories are handled by pulling a
+newer image. This page records the advisories that required action and tells you
+how to check whether your installation is affected.
+
+## PHP2Shell: critical remote code execution in PHP (21 October 2026)
+
+**Severity: critical. Unauthenticated remote code execution as the web worker.**
+
+The PHP project released 8.5.12, 8.4.27, 8.3.36, and 8.2.35 on 21 October 2026 to
+fix two related memory-safety issues that let an unauthenticated attacker execute
+code on any server running PHP:
+
+| Advisory | CVE | What it is |
+| --- | --- | --- |
+| [GHSA-w8hw-w9fx-j79w](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w) | CVE-2026-109618 | Remote code execution through memory corruption during out-of-memory handling. |
+| [GHSA-6wmf-4rv5-p3rp](https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp) | CVE-2026-109619 | Remote code execution through a heap use-after-free caused by stale global state. |
+
+Both score CVSS 9.2. Every PHP installation that serves web requests is affected,
+including PHP-FPM, Apache with `mod_php`, `php-cgi`, FrankenPHP, and LiteSpeed. The
+PHP project considers `mod_php` the highest-risk setup, because a demonstrated
+exploit triggers the issue before any application code runs.
+
+Affected versions are PHP 8.2.x before 8.2.35, 8.3.x before 8.3.36, 8.4.x before
+8.4.27, and 8.5.x before 8.5.12. There is no complete mitigation other than
+updating.
+
+### How this affected OpenSinop
+
+OpenSinop runs PHP under FrankenPHP with Laravel Octane, which keeps long-lived
+workers in memory between requests. That is exactly the shape of deployment the
+second issue targets: the producer and the consumer of the stale state have to be
+handled by the same worker. An earlier OpenSinop image was built on
+`dunglas/frankenphp:1.9-php8.5`, which shipped **PHP 8.5.0** and was therefore
+vulnerable.
+
+The published image now builds on `dunglas/frankenphp:1.13-php8.5.12`, which
+carries **PHP 8.5.12**. The hardened `php.ini` also:
+
+- sets `session.upload_progress.enabled = 0`, removing the session state that the
+  stale global state issue needs;
+- sets `memory_limit = -1`, so an attacker can no longer trigger the memory
+  exhaustion at a predictable moment, with a container memory limit
+  (`APP_MEMORY_LIMIT`, default `2g`) taking over as the availability boundary;
+- lowers `post_max_size` to `32M` and `upload_max_filesize` to `16M`, well above
+  the application's own 10 MB upload ceiling, so an oversized body is rejected
+  before PHP allocates memory for it.
+
+The application also refuses to serve requests on an unpatched runtime. On a
+production instance, a runtime older than PHP 8.5.12 returns `503` with an
+explanation instead of serving traffic.
+
+### What you must do
+
+1. Update to an image built on PHP 8.5.12 or newer.
+
+   ```bash
+   bash install.sh --update
+   ```
+
+   or, with Docker Compose:
+
+   ```bash
+   docker compose pull && docker compose up -d
+   ```
+
+2. Confirm the running version.
+
+   ```bash
+   docker exec -it opensinop php -v
+   ```
+
+   You need `PHP 8.5.12` or newer. Anything older is still exposed.
+
+3. If you built the image yourself from source, rebuild it so the new base image
+   is picked up:
+
+   ```bash
+   docker compose build --no-cache && docker compose up -d
+   ```
+
+4. If you cannot update immediately, isolate the instance from public networks
+   until you can. The application does not consider a vulnerable runtime
+   acceptable, so it will refuse to serve requests rather than pretend to be safe.
+
+### If you think you were exploited
+
+Both issues require no authentication, and proof-of-concept code circulated
+publicly after the release. Treat any instance that was internet-facing on PHP
+before 8.5.12 as potentially affected:
+
+- review web server, application, and authentication logs for unexpected requests;
+- check for unexpected processes, files, or outbound connections from the PHP
+  worker;
+- rotate application secrets, database credentials, and Circle agent wallet
+  credentials that were reachable from the instance.
+
+## Node.js security release (21 October 2026)
+
+Node.js released 22.23.4, 24.22.1, and 26.12.1 on 21 October 2026 to fix ten
+issues, including a Brotli decoder out-of-bounds write that permits remote code
+execution (CVE-2026-111497), TLS certificate hostname bypasses
+(CVE-2026-105483, CVE-2026-106069), and a `dns.resolve` truncation on names
+containing a NUL character (CVE-2026-105482).
+
+**OpenSinop's production container does not ship Node.js.** The runtime image
+contains PHP and the compiled frontend assets only; Node.js is used at build time
+to compile assets and to run the test suite. The patched versions are pinned in
+the continuous integration workflows so no build or test job runs on a
+vulnerable runtime.
+
+## Filament multi-factor authentication reauthentication (5 October 2026)
+
+Filament's multi-factor authentication management actions did not require
+password reauthentication (CVE-2026-104181, GHSA-7m6h-rg42-m449). Filament
+5.0.0 up to and including 5.8.2 were affected. OpenSinop now ships Filament
+5.8.4.
+
+If you run an older OpenSinop image, update the image as described above; the
+Filament fix is included in the same release.
+
+## Reporting a vulnerability
+
+Please report suspected vulnerabilities privately to the maintainers rather than
+opening a public issue, so a fix can be prepared before the details are public.

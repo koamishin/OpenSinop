@@ -78,6 +78,7 @@ export default defineConfig({
                     items: [
                         { label: 'Terms in plain English', slug: 'reference/glossary' },
                         { label: 'Command reference', slug: 'reference/commands' },
+                        { label: 'Security advisories', slug: 'reference/security-advisories' },
                         { label: 'Troubleshooting', slug: 'reference/troubleshooting' },
                         { label: 'Code examples', slug: 'reference/examples' },
                     ],

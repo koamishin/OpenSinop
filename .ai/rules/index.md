@@ -18,5 +18,6 @@ Before planning or editing, find the row whose globs match the file's path and r
 | app/Services/Lepton*.php, app/Services/Lepton/**/*.php, app/Console/Commands/Lepton*.php, app/Console/Commands/EduFlowDemo.php, database/seeders/**/*Lepton*.php, database/seeders/**/*Financial*.php, app/Services/ArcSettlementVerifier.php, app/Services/IsolatedPaymentExecutor.php, app/Services/ReservationCapacity.php, app/Services/MandateOccurrenceScanner.php, app/Services/RecordRetrospectiveAgreement.php, app/Jobs/ObserveCircleNotification.php, app/Console/Commands/RecoverCircleNotifications.php, database/migrations/*circle_webhook_notifications*, tests/Feature/CircleWebhookTest.php | .ai/rules/lepton.md |
 | app/Services/StudentWallet*.php, app/Services/CircleAgentWalletCli.php, app/Console/Commands/*StudentWallet*.php, database/migrations/*student_wallet*.php, app/Models/StudentWallet*.php, app/Models/PaymentSubmissionOutbox.php | .ai/rules/models.md |
 | rector.php | .ai/rules/rector-php.md |
+| Dockerfile, docker/Dockerfile, docker/php.ini, config/security.php, app/Http/Middleware/EnforceSecureRuntime.php, .github/workflows/ci.yml | .ai/rules/runtime-security.md |
 | scripts/** | .ai/rules/scripts.md |
 | app/Services/StudentBillPaymentQuote.php, app/Models/StudentBillPayment.php | .ai/rules/services-models.md |
