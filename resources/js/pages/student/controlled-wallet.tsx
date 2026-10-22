@@ -811,7 +811,11 @@ export default function ControlledWallet({
 
                                 {/* Connection Options Grid (Shown always or when connecting) */}
                                 <section
-                                    ref={switchStage === 'choosing' ? switchPanel : undefined}
+                                    ref={
+                                        switchStage === 'choosing'
+                                            ? switchPanel
+                                            : undefined
+                                    }
                                     tabIndex={-1}
                                     aria-label="Wallet connection options"
                                     className="mt-6 border-t border-[#36312b] pt-6"
@@ -819,13 +823,17 @@ export default function ControlledWallet({
                                     {switchStage === 'choosing' && (
                                         <div role="status">
                                             <p>
-                                                Choose your replacement wallet. Your current wallet stays active until you verify the new one.
+                                                Choose your replacement wallet.
+                                                Your current wallet stays active
+                                                until you verify the new one.
                                             </p>
                                             <Button
                                                 variant="ghost"
                                                 disabled={busy}
                                                 data-test="wallet-change-cancel"
-                                                onClick={() => setSwitchStage('idle')}
+                                                onClick={() =>
+                                                    setSwitchStage('idle')
+                                                }
                                             >
                                                 Cancel wallet change
                                             </Button>
