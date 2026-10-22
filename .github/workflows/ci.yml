@@ -29,7 +29,9 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.5'
+          # Pinned to the PHP2Shell patch release. PHP 8.5.12 fixes
+          # CVE-2026-109618 and CVE-2026-109619.
+          php-version: '8.5.12'
           tools: composer:v2
           coverage: none
 
@@ -58,7 +60,8 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.5'
+          # Pinned to the PHP2Shell patch release (see above).
+          php-version: '8.5.12'
           tools: composer:v2
           coverage: none
 
@@ -87,7 +90,8 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.5'
+          # Pinned to the PHP2Shell patch release (see above).
+          php-version: '8.5.12'
           tools: composer:v2
           coverage: none
 
@@ -111,7 +115,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php-version: ['8.5']
+        php-version: ['8.5.12']
 
     steps:
       - name: Checkout code
@@ -146,7 +150,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # Pinned to the 2026-10-21 security release. Node 22.23.4 fixes the
+          # TLS hostname bypasses, the dns.resolve NUL truncation and the
+          # Brotli decoder out-of-bounds write (CVE-2026-111497).
+          node-version: '22.23.4'
 
       - name: Install Node Dependencies
         run: npm ci
@@ -191,7 +198,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # Pinned to the 2026-10-21 security release. Node 22.23.4 fixes the
+          # TLS hostname bypasses, the dns.resolve NUL truncation and the
+          # Brotli decoder out-of-bounds write (CVE-2026-111497).
+          node-version: '22.23.4'
 
       - name: Cache Node modules
         uses: actions/cache@v4
