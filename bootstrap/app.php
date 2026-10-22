@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Http\Middleware\EnforceHttps;
 use App\Http\Middleware\EnforceSchoolRegistration;
+use App\Http\Middleware\EnforceSecureRuntime;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleColorTheme;
 use App\Http\Middleware\HandleInertiaRequests;
@@ -19,6 +20,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // First: refuse to serve anything at all on a PHP runtime that is still
+        // exposed to CVE-2026-109618 / CVE-2026-109619.
+        $middleware->append(EnforceSecureRuntime::class);
         $middleware->append(EnforceHttps::class);
         $middleware->encryptCookies(except: ['appearance', 'color-theme', 'sidebar_state']);
         // One unauthenticated POST route only. A wildcard here would exempt every

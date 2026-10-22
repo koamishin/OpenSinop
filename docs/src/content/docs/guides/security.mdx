@@ -86,6 +86,23 @@ and settlement verification as separate checks.
 - Restore backups with new submission stopped. Reconcile unresolved attempts before
   permitting new payments.
 
+## Runtime security baseline
+
+OpenSinop runs on PHP 8.5.12 or newer. Earlier 8.5.x releases carry two critical,
+unauthenticated remote code execution issues (CVE-2026-109618 and
+CVE-2026-109619). A production instance on an older runtime refuses to serve
+requests rather than pretending to be safe.
+
+Check what you are running:
+
+```bash
+docker exec -it opensinop php -v
+```
+
+If the version is older than 8.5.12, update the image. See
+[Security advisories](../../reference/security-advisories/) for the full advisory,
+the update procedure, and what to check if you suspect exploitation.
+
 ## Next step
 
 Confirm [runtime configuration](../../getting-started/configuration/) and

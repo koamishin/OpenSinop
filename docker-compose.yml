@@ -40,6 +40,12 @@ services:
         volumes:
             - opensinop_storage:/app/storage
             - opensinop_cache:/app/bootstrap/cache
+        # Availability boundary for the PHP worker. docker/php.ini sets
+        # memory_limit = -1 to remove the attacker-triggerable per-request OOM
+        # that CVE-2026-109618 abuses, so the container limit is what keeps a
+        # runaway request from taking down the host. The kernel OOM killer
+        # targets the worker; supervisor restarts it.
+        mem_limit: ${APP_MEMORY_LIMIT:-2g}
         depends_on:
             db:
                 condition: service_healthy

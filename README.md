@@ -40,6 +40,7 @@ Review verified student fee collections, plan departmental allocations against p
 - [Key Features](#key-features)
 - [Architecture & Design Principles](#architecture--design-principles)
 - [Production readiness](#production-readiness)
+- [Security](#security)
 - [Prerequisites](#prerequisites)
 - [Quick Start (Local Development)](#quick-start-local-development)
 - [Self-Hosting & Production Deployment](#self-hosting--production-deployment)
@@ -142,14 +143,39 @@ See [PLAN.md](PLAN.md) for the complete financial, pilot, and release-safety roa
 
 ---
 
+## Security
+
+> [!WARNING]
+> **Update your image now if you run PHP before 8.5.12.** On 21 October 2026 the PHP project fixed two critical, unauthenticated remote code execution issues (CVE-2026-109618 and CVE-2026-109619, CVSS 9.2) in PHP 8.5.12, 8.4.27, 8.3.36, and 8.2.35. Every PHP installation that serves web requests is affected, including FrankenPHP. Earlier OpenSinop images were built on PHP 8.5.0 and were vulnerable. Proof-of-concept code circulated publicly after the release, so treat any internet-facing instance running an older PHP as potentially affected.
+
+The published image now builds on `dunglas/frankenphp:1.13-php8.5.12` and carries **PHP 8.5.12**. Update with:
+
+```bash
+bash install.sh --update
+# or
+docker compose pull && docker compose up -d
+```
+
+Confirm what you are running:
+
+```bash
+docker exec -it opensinop php -v
+```
+
+The application refuses to serve requests on a runtime older than PHP 8.5.12. In production that means a `503` with an explanation, not a quietly vulnerable service. The hardened `php.ini` additionally disables session upload progress, removes the attacker-triggerable per-request memory limit in favour of a container memory limit (`APP_MEMORY_LIMIT`, default `2g`), and caps request bodies at 32M.
+
+Full details, including what to check if you suspect exploitation, are in the [security advisories](https://koamishin.github.io/OpenSinop/reference/security-advisories/) documentation page.
+
+---
+
 ## Prerequisites
 
 | Requirement | Minimum Version | Notes & Installation |
 |---|---|---|
 | **Docker** (Self-hosting) | 24.0+ (Compose v2) | [Docker Engine](https://docs.docker.com/engine/install/) · [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
-| **PHP** (Local / Bare-metal) | **8.5+** (required) | Extensions: `pdo_sqlite` / `pdo_pgsql`, `mbstring`, `openssl`, `curl`, `bcmath`, `intl`, `zip` |
+| **PHP** (Local / Bare-metal) | **8.5.12+** (required) | Extensions: `pdo_sqlite` / `pdo_pgsql`, `mbstring`, `openssl`, `curl`, `bcmath`, `intl`, `zip`. 8.5.12 is the minimum: earlier 8.5.x releases are exposed to the critical PHP2Shell RCE issues. See [Security](#security). |
 | **Composer** | 2.x | [getcomposer.org](https://getcomposer.org/download/) |
-| **Node.js & npm** | 20.18.2+ | [nodejs.org](https://nodejs.org/en/download) |
+| **Node.js & npm** | 22.23.4+ | [nodejs.org](https://nodejs.org/en/download). Build-time only; the runtime image ships no Node.js. |
 | **Circle CLI** (Optional) | 1.1.4+ | Required only when `LEPTON_DRIVER=circle`: `npm install -g @circle-fin/cli` |
 | **uv / arc-canteen** (Optional) | Latest | Optional helper CLI (`uv tool install arc-canteen`); Arc reads use direct HTTPS JSON-RPC |
 
@@ -274,6 +300,9 @@ docker compose pull && docker compose up -d
 ```
 
 ### Option C — Bare-Metal Production Setup
+
+> [!IMPORTANT]
+> Option C does not use the shipped `docker/php.ini`, so the hardened runtime settings are yours to apply: PHP **8.5.12 or newer**, `session.upload_progress.enabled = 0`, `post_max_size = 32M`, and `upload_max_filesize = 16M`. Keep a finite `memory_limit` or bound the worker with a systemd/cgroup memory limit. See [Security](#security).
 
 1. **Clone and build:**
    ```bash
