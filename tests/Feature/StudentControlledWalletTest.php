@@ -619,7 +619,7 @@ test('Circle failure names the operation and never exposes raw provider messages
     mockExpectation($http, 'request')->once()->andReturn(new HttpResponse(400, ['code' => 155101, 'message' => 'sensitive-provider-detail']));
     assert($http instanceof JsonTransport);
     $service = new CircleStudentWallets($http);
-    expect(fn () => $service->request('POST', 'users/token', ['userId' => 'test-user']))
+    expect(fn (): array => $service->request('POST', 'users/token', ['userId' => 'test-user']))
         ->toThrow(ValidationException::class, 'Circle wallet session failed (HTTP 400). Circle code 155101.');
 });
 
@@ -905,8 +905,8 @@ test('background receipt reconciliation is idempotent and never creates spending
     expect(Transaction::query()->count())->toBe(1);
     $job = new ReconcileStudentControlledPayment($payment->id);
     config(['eduflow.autonomous_pipeline.reviewer_id' => $this->student->user_id]);
-    expect(fn () => app()->call([$job, 'handle']))->toThrow(RuntimeException::class);
-    expect(fn () => app()->call([$job, 'handle']))->toThrow(RuntimeException::class);
+    expect(fn () => app()->call($job->handle(...)))->toThrow(RuntimeException::class);
+    expect(fn () => app()->call($job->handle(...)))->toThrow(RuntimeException::class);
     expect(Transaction::query()->count())->toBe(1)
         ->and(CollectionBatch::query()->count())->toBe(1)
         ->and(CollectionBatchReview::query()->count())->toBe(0)
@@ -952,8 +952,8 @@ test('configured background classification queues once without approving receipt
     $this->receipt = controlledReceipt($payment);
     $checkout->confirm($this->student, $payment, '0x'.str_repeat('4', 64));
     $job = new ReconcileStudentControlledPayment($payment->id);
-    app()->call([$job, 'handle']);
-    app()->call([$job, 'handle']);
+    app()->call($job->handle(...));
+    app()->call($job->handle(...));
     expect(InstitutionPolicyEvaluation::query()->count())->toBe(1)
         ->and(InstitutionPolicyEvaluation::query()->sole()->state)->toBe('queued')
         ->and(CollectionBatchReview::query()->count())->toBe(0)

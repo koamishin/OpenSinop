@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\StudentTuitionPayment;
+use App\Models\Wallet;
 use Illuminate\Validation\ValidationException;
 
 /** Read-only handoff to existing staff-reviewed finance workflows. Never approves or executes. */
@@ -26,7 +27,7 @@ final readonly class AutonomousPipelineBridge
         $payment = is_int($payment) ? StudentTuitionPayment::query()->findOrFail($payment) : $payment;
         $institution = $this->institutions->require();
         $wallet = $institution->primaryWallet();
-        if (! $payment->isReal() || $wallet === null
+        if (! $payment->isReal() || ! $wallet instanceof Wallet
             || strcasecmp($payment->recipient_address, $wallet->address) !== 0
             || ($payment->student->organization_id !== null && $payment->student->organization_id !== $institution->id)) {
             throw ValidationException::withMessages(['payment' => 'Verified payment must belong to this institution treasury.']);
@@ -60,7 +61,7 @@ final readonly class AutonomousPipelineBridge
         $institution = $this->institutions->current();
         $wallet = $institution?->primaryWallet();
         $treasury = (string) config('lepton.arc.treasury');
-        if ($treasury === '' && $wallet !== null) {
+        if ($treasury === '' && $wallet instanceof Wallet) {
             $treasury = $wallet->address;
         }
 

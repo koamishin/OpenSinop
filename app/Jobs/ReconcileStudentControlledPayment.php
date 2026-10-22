@@ -6,6 +6,7 @@ namespace App\Jobs;
 
 use App\Models\CollectionBatch;
 use App\Models\InstitutionPolicyEvaluation;
+use App\Models\InstitutionPolicyPublication;
 use App\Models\Organization;
 use App\Models\StudentControlledPayment;
 use App\Models\User;
@@ -59,7 +60,7 @@ class ReconcileStudentControlledPayment implements ShouldQueue
                 throw new \RuntimeException('Receipt or classification requester missing. Configure an existing verified institution admin; no roles or approvals were created.');
             }
             $publication = $policies->active();
-            if ($publication === null) {
+            if (! $publication instanceof InstitutionPolicyPublication) {
                 throw new \RuntimeException('No active published institution policy; classification cannot start.');
             }
             $source = $evaluations->source($actor, 'collection', $batch->id);
