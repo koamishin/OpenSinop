@@ -1,5 +1,8 @@
-ARG PHP_VERSION=8.5
-ARG FRANKENPHP_VERSION=1.9
+# PHP 8.5.12 is the minimum safe runtime. It fixes CVE-2026-109618 (RCE via OOM
+# corruption) and CVE-2026-109619 (RCE via stale global state), both CVSS 9.2 and
+# both reachable without authentication. See docs/src/content/docs/reference/security-advisories.mdx.
+ARG PHP_VERSION=8.5.12
+ARG FRANKENPHP_VERSION=1.13
 ARG COMPOSER_VERSION=2.8
 ARG APP_NAME=OpenSinop
 ARG APP_ENV=production

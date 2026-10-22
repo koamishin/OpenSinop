@@ -21,6 +21,7 @@
 #   DISTRO_FAMILY        override Linux distribution detection for Docker install
 #   ADVERTISE_ADDR       address for `docker swarm init` on multi-interface hosts
 #   ENDPOINT_MODE=dnsrr  force service endpoint mode (Proxmox LXC hosts without IPVS)
+#   APP_MEMORY_LIMIT     memory ceiling for the application container (default: 2g)
 
 if [ -z "${BASH_VERSION:-}" ]; then
     printf 'install.sh requires bash. Run it with: bash install.sh\n' >&2
@@ -283,6 +284,7 @@ Environment:
                        (debian|rhel|suse|arch|alpine|void|gentoo|nixos)
   ADVERTISE_ADDR       address for `docker swarm init` on multi-interface hosts
   ENDPOINT_MODE=dnsrr  force service endpoint mode (LXC hosts without IPVS)
+  APP_MEMORY_LIMIT     memory ceiling for the application container (default: 2g)
 EOF
             exit 0
             ;;
@@ -307,6 +309,13 @@ env_value() {
     fi
     printf '%s' "$value"
 }
+
+# Memory ceiling for the application container. docker/php.ini sets
+# memory_limit = -1 so an attacker cannot trigger the CVE-2026-109618 out-of-memory
+# condition at a predictable moment; this container limit is the availability
+# boundary that replaces it.
+APP_MEMORY_LIMIT="${APP_MEMORY_LIMIT:-$(env_value APP_MEMORY_LIMIT)}"
+APP_MEMORY_LIMIT="${APP_MEMORY_LIMIT:-2g}"
 
 
 # ---- Docker Engine ----
@@ -787,7 +796,7 @@ if [ "$UPDATE" = "1" ]; then
     fi
 
     title "Updating application service"
-    if ! "${DOCKER_CMD[@]}" service update "${UPDATE_RESOLVE_ARGS[@]}" --image "$IMAGE" "$APP_SERVICE"; then
+    if ! "${DOCKER_CMD[@]}" service update "${UPDATE_RESOLVE_ARGS[@]}" --image "$IMAGE" --limit-memory "$APP_MEMORY_LIMIT" "$APP_SERVICE"; then
         err "docker service update failed."
         exit 1
     fi
@@ -1171,6 +1180,7 @@ if ! "${DOCKER_CMD[@]}" service create \
     --health-timeout 5s \
     --health-retries 12 \
     --health-start-period 60s \
+    --limit-memory "$APP_MEMORY_LIMIT" \
     --update-parallelism 1 \
     --update-order stop-first \
     "${SWARM_ENDPOINT_ARGS[@]}" \
